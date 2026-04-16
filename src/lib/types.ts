@@ -92,6 +92,7 @@ export interface SimulationRun {
   status: SimStatus;
   error_message: string | null;
   created_at: string;
+  last_heartbeat_at: string | null;
   completed_at: string | null;
 }
 

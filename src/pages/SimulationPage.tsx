@@ -64,6 +64,14 @@ const ROLE_ICONS: Record<AgentProfile["role"], IconName> = {
   consumer: "user", supporter: "heart", critic: "dislike", media: "broadcast",
 };
 
+const STALE_SIMULATION_TIMEOUT_MS = 20 * 60 * 1000;
+
+function getSimulationHeartbeatMs(run: SimulationRun) {
+  const timestamp = run.last_heartbeat_at || run.created_at;
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
 export default function SimulationPage() {
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
@@ -80,7 +88,8 @@ export default function SimulationPage() {
   const [strategyType, setStrategyType] = useState<StrategyType>("apology");
   const [strategyMessage, setStrategyMessage] = useState("");
   const [injectionRound, setInjectionRound] = useState(2);
-  const totalRounds = 5;
+  const [baselineTotalRounds, setBaselineTotalRounds] = useState(5);
+  const [interventionTotalRounds, setInterventionTotalRounds] = useState(5);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -91,7 +100,35 @@ export default function SimulationPage() {
     ]);
     setCrisisCase(c);
     setAgents(ags ?? []);
-    const runsData = rs ?? [];
+    let runsData = rs ?? [];
+
+    const staleCutoffMs = Date.now() - STALE_SIMULATION_TIMEOUT_MS;
+    const staleRunIds = runsData
+      .filter((run) => run.status === "running")
+      .filter((run) => getSimulationHeartbeatMs(run) < staleCutoffMs)
+      .map((run) => run.id);
+
+    if (staleRunIds.length > 0) {
+      const nowIso = new Date().toISOString();
+      const { error: cleanupErr } = await supabase
+        .from("simulation_runs")
+        .update({
+          status: "failed",
+          error_message: "Simulation was interrupted or timed out before completion.",
+          completed_at: nowIso,
+          last_heartbeat_at: nowIso,
+        })
+        .in("id", staleRunIds);
+      if (!cleanupErr) {
+        const { data: refreshedRuns } = await supabase
+          .from("simulation_runs")
+          .select("*")
+          .eq("case_id", caseId!)
+          .order("created_at");
+        runsData = refreshedRuns ?? runsData;
+      }
+    }
+
     setRuns(runsData);
 
     const runStates: Record<string, RoundState[]> = {};
@@ -114,6 +151,10 @@ export default function SimulationPage() {
     if (caseId) void load();
   }, [caseId, load]);
 
+  useEffect(() => {
+    setInjectionRound((current) => Math.min(current, interventionTotalRounds));
+  }, [interventionTotalRounds]);
+
   async function runSimulation(type: "baseline" | "intervention") {
     setError("");
     if (type === "baseline") setRunningBaseline(true);
@@ -126,7 +167,7 @@ export default function SimulationPage() {
         body: JSON.stringify({
           case_id: caseId,
           run_type: type,
-          total_rounds: totalRounds,
+          total_rounds: type === "baseline" ? baselineTotalRounds : interventionTotalRounds,
           ...(type === "intervention" && {
             strategy_type: strategyType,
             strategy_message: strategyMessage || undefined,
@@ -149,6 +190,7 @@ export default function SimulationPage() {
 
   const baselineRun = runs.find((r) => r.run_type === "baseline" && r.status === "completed");
   const hasBaseline = !!baselineRun;
+  const hasRunningSim = runs.some((r) => r.status === "running");
 
   if (loading) return (
     <div className="flex items-center justify-center min-h-full"><PSpinner size="medium" /></div>
@@ -172,7 +214,7 @@ export default function SimulationPage() {
         }
       />
 
-      <div className="p-fluid-lg max-w-6xl">
+      <div className="w-full p-fluid-lg">
         {error && (
           <PInlineNotification heading="Error" description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
         )}
@@ -186,11 +228,11 @@ export default function SimulationPage() {
             </PButton>
           </div>
         ) : (
-          <div className="grid grid-cols-5 gap-fluid-md">
-            <div className="col-span-2 flex flex-col gap-fluid-md">
+          <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-[minmax(32rem,1.15fr)_minmax(0,1.35fr)] 2xl:grid-cols-[minmax(36rem,1.2fr)_minmax(0,1.3fr)]">
+            <div className="flex flex-col gap-fluid-md">
               <div>
                 <PHeading size="small" className="mb-fluid-sm">Stakeholder Agents</PHeading>
-                <div className="grid grid-cols-2 gap-static-sm">
+                <div className="grid grid-cols-1 gap-static-sm sm:grid-cols-2">
                   {agents.map((a) => <AgentCard key={a.id} agent={a} />)}
                 </div>
               </div>
@@ -200,19 +242,47 @@ export default function SimulationPage() {
               <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md flex flex-col gap-fluid-sm">
                 <PHeading size="small">Run Baseline</PHeading>
                 <PText size="small" className="text-contrast-medium">
-                  Simulate {totalRounds} rounds with no intervention — establishes the natural crisis trajectory.
+                  Simulate {baselineTotalRounds} rounds with no intervention — establishes the natural crisis trajectory.
                 </PText>
+                <div>
+                  <PText size="small" weight="semi-bold" className="mb-static-xs">Final Round</PText>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={baselineTotalRounds}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      if (Number.isFinite(next)) {
+                        setBaselineTotalRounds(Math.min(Math.max(next, 1), 20));
+                      }
+                    }}
+                    className="w-full border border-contrast-low rounded bg-canvas px-static-sm py-static-xs text-primary focus:outline-none focus:border-primary text-sm"
+                    style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif" }}
+                  />
+                </div>
                 <PButton
                   loading={runningBaseline}
-                  disabled={runningBaseline || runningIntervention}
+                  disabled={runningBaseline || runningIntervention || hasRunningSim || !agents.length}
                   icon="chart"
                   onClick={() => runSimulation("baseline")}
                 >
-                  {runningBaseline ? "Simulating..." : hasBaseline ? "Re-run Baseline" : "Run Baseline"}
+                  {runningBaseline
+                    ? "Simulating..."
+                    : hasRunningSim
+                      ? "Run baseline later"
+                      : hasBaseline
+                        ? "Re-run Baseline"
+                        : "Run Baseline"}
                 </PButton>
+                {hasRunningSim && (
+                  <PText size="small" className="text-warning text-center">
+                    A simulation is currently running for this case. Wait for completion before starting another.
+                  </PText>
+                )}
                 {runningBaseline && (
                   <PText size="small" className="text-contrast-medium text-center">
-                    Running {totalRounds} rounds with 4 agents... (~30s)
+                    Running {baselineTotalRounds} rounds with 4 agents... (~30s)
                   </PText>
                 )}
               </div>
@@ -245,11 +315,32 @@ export default function SimulationPage() {
                 </div>
 
                 <div>
+                  <PText size="small" weight="semi-bold" className="mb-static-xs">Final Round</PText>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={interventionTotalRounds}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      if (Number.isFinite(next)) {
+                        setInterventionTotalRounds(Math.min(Math.max(next, 1), 20));
+                      }
+                    }}
+                    className="w-full border border-contrast-low rounded bg-canvas px-static-sm py-static-xs text-primary focus:outline-none focus:border-primary text-sm"
+                    style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif" }}
+                  />
+                  <PText size="small" className="text-contrast-medium mt-static-xs">
+                    Intervention simulation will stop after round {interventionTotalRounds}
+                  </PText>
+                </div>
+
+                <div>
                   <PText size="small" weight="semi-bold" className="mb-static-xs">
                     Inject at Round
                   </PText>
-                  <div className="flex gap-static-xs">
-                    {[1, 2, 3, 4].map((r) => (
+                  <div className="flex flex-wrap gap-static-xs">
+                    {Array.from({ length: interventionTotalRounds }, (_, index) => index + 1).map((r) => (
                       <button
                         key={r}
                         onClick={() => setInjectionRound(r)}
@@ -281,22 +372,27 @@ export default function SimulationPage() {
                   />
                 </div>
 
-                <PButton
-                  loading={runningIntervention}
-                  disabled={runningBaseline || runningIntervention || !hasBaseline}
-                  icon="arrow-right"
-                  variant="secondary"
-                  onClick={() => runSimulation("intervention")}
+                  <PButton
+                    loading={runningIntervention}
+                    disabled={runningBaseline || runningIntervention || !hasBaseline || hasRunningSim}
+                    icon="arrow-right"
+                    variant="secondary"
+                    onClick={() => runSimulation("intervention")}
                 >
-                  {runningIntervention ? "Simulating..." : "Run Intervention"}
+                  {runningIntervention ? "Simulating..." : hasRunningSim ? "Run later" : "Run Intervention"}
                 </PButton>
                 {!hasBaseline && (
                   <PText size="small" className="text-warning text-center">Run baseline first</PText>
                 )}
+                {hasRunningSim && (
+                  <PText size="small" className="text-warning text-center">
+                    A simulation is currently running for this case. Wait for completion before starting another.
+                  </PText>
+                )}
               </div>
             </div>
 
-            <div className="col-span-3 flex flex-col gap-fluid-md">
+            <div className="min-w-0 flex flex-col gap-fluid-md">
               <PHeading size="small">Simulation Logs</PHeading>
 
               {runs.length === 0 && !runningBaseline && !runningIntervention ? (

@@ -75,10 +75,16 @@ For each agent return:
 Return ONLY a valid JSON object with key "agents" containing the array.`;
 
     const extracted = await chatJson({ prompt, temperature: 0.7 });
+    if (!extracted || !Array.isArray((extracted as { agents?: unknown }).agents)) {
+      return new Response(
+        JSON.stringify({ error: "LLM response did not include an agents array" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     await supabase.from("agent_profiles").delete().eq("case_id", case_id);
 
-    const agentsData = (extracted.agents || []).map((a: {
+    const agentsData = (extracted.agents as Array<{
       role: string; stance: string; concern: string;
       emotional_sensitivity: number; spread_tendency: number;
       persona_description: string; initial_beliefs: string[];

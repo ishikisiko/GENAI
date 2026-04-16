@@ -8,6 +8,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 export const EDGE_FN_BASE = `${supabaseUrl}/functions/v1`;
 
 export const edgeHeaders = {
+  apikey: supabaseAnonKey,
   Authorization: `Bearer ${supabaseAnonKey}`,
   "Content-Type": "application/json",
 };
