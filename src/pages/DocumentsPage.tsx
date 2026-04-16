@@ -39,11 +39,12 @@ export default function DocumentsPage() {
   const [loading, setLoading] = useState(true);
   const [extracting, setExtracting] = useState(false);
   const [addingCaseUpload, setAddingCaseUpload] = useState(false);
-  const [addingGlobalSourceId, setAddingGlobalSourceId] = useState<string | null>(null);
+  const [addingGlobalSources, setAddingGlobalSources] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [query, setQuery] = useState("");
+  const [selectedGlobalSourceIds, setSelectedGlobalSourceIds] = useState<string[]>([]);
 
   const [docTitle, setDocTitle] = useState("");
   const [docContent, setDocContent] = useState("");
@@ -118,29 +119,49 @@ export default function DocumentsPage() {
     await load();
   }
 
-  async function addFromGlobalLibrary(source: GlobalSourceDocument) {
-    setAddingGlobalSourceId(source.id);
-    setError("");
-    setSuccess("");
+  async function addSelectedFromGlobalLibrary() {
+    const selectedSources = globalSources.filter((source) =>
+      selectedGlobalSourceIds.includes(source.id) && !linkedGlobalSourceIds.has(source.id)
+    );
 
-    const { error: insertError } = await supabase.from("source_documents").insert({
-      case_id: caseId!,
-      global_source_id: source.id,
-      source_origin: "global_library",
-      title: source.title,
-      content: source.content,
-      doc_type: source.doc_type,
-    });
-
-    if (insertError) {
-      setError(insertError.message);
-      setAddingGlobalSourceId(null);
+    if (selectedSources.length === 0) {
+      setError("Select at least one global source.");
       return;
     }
 
-    setSuccess(`Added "${source.title}" to this case.`);
-    setAddingGlobalSourceId(null);
+    setAddingGlobalSources(true);
+    setError("");
+    setSuccess("");
+
+    const { error: insertError } = await supabase.from("source_documents").insert(
+      selectedSources.map((source) => ({
+        case_id: caseId!,
+        global_source_id: source.id,
+        source_origin: "global_library",
+        title: source.title,
+        content: source.content,
+        doc_type: source.doc_type,
+      }))
+    );
+
+    if (insertError) {
+      setError(insertError.message);
+      setAddingGlobalSources(false);
+      return;
+    }
+
+    setSelectedGlobalSourceIds([]);
+    setSuccess(`Added ${selectedSources.length} global source${selectedSources.length > 1 ? "s" : ""} to this case.`);
+    setAddingGlobalSources(false);
     await load();
+  }
+
+  function toggleGlobalSourceSelection(sourceId: string) {
+    setSelectedGlobalSourceIds((current) =>
+      current.includes(sourceId)
+        ? current.filter((id) => id !== sourceId)
+        : [...current, sourceId]
+    );
   }
 
   async function deleteDocument(id: string) {
@@ -203,6 +224,11 @@ export default function DocumentsPage() {
       || DOC_TYPE_LABELS[source.doc_type].toLowerCase().includes(normalized)
     );
   }, [globalSources, query]);
+
+  const selectedVisibleCount = useMemo(
+    () => filteredGlobalSources.filter((source) => selectedGlobalSourceIds.includes(source.id)).length,
+    [filteredGlobalSources, selectedGlobalSourceIds]
+  );
 
   if (loading) {
     return (
@@ -342,12 +368,21 @@ export default function DocumentsPage() {
                 <div>
                   <PHeading size="small">Select from Global Library</PHeading>
                   <PText size="small" className="text-contrast-medium">
-                    Reuse previously uploaded sources without re-pasting content.
+                    Reuse previously uploaded sources without re-pasting content. You can select multiple sources at once.
                   </PText>
                 </div>
-                <PButton variant="secondary" icon="document" onClick={() => navigate("/sources")}>
-                  Open Library
-                </PButton>
+                <div className="flex items-center gap-static-sm">
+                  <PButton
+                    loading={addingGlobalSources}
+                    disabled={addingGlobalSources || selectedGlobalSourceIds.length === 0}
+                    onClick={addSelectedFromGlobalLibrary}
+                  >
+                    {selectedGlobalSourceIds.length === 0 ? "Add Selected" : `Add Selected (${selectedGlobalSourceIds.length})`}
+                  </PButton>
+                  <PButton variant="secondary" icon="document" onClick={() => navigate("/sources")}>
+                    Open Library
+                  </PButton>
+                </div>
               </div>
 
               <div className="p-fluid-md border-b border-contrast-low">
@@ -359,6 +394,9 @@ export default function DocumentsPage() {
                   className="w-full border border-contrast-low rounded bg-canvas px-static-md py-static-sm text-primary placeholder:text-contrast-low focus:outline-none focus:border-primary"
                   style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "15px" }}
                 />
+                <PText size="small" className="text-contrast-medium mt-static-xs">
+                  {selectedVisibleCount > 0 ? `${selectedVisibleCount} selected in current results.` : "Select one or more sources, then click Add Selected."}
+                </PText>
               </div>
 
               {filteredGlobalSources.length === 0 ? (
@@ -373,12 +411,25 @@ export default function DocumentsPage() {
                   {filteredGlobalSources.map((source) => {
                     const typeConfig = DOC_TYPES.find((type) => type.value === source.doc_type)!;
                     const alreadyLinked = linkedGlobalSourceIds.has(source.id);
+                    const isSelected = selectedGlobalSourceIds.includes(source.id);
                     return (
-                      <div key={source.id} className="p-fluid-sm flex gap-static-md">
+                      <div key={source.id} className="p-fluid-sm flex gap-static-md items-start">
+                        <div className="pt-static-xs w-4 shrink-0">
+                          {!alreadyLinked && (
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              disabled={addingGlobalSources}
+                              onChange={() => toggleGlobalSourceSelection(source.id)}
+                              className="h-4 w-4 accent-[var(--p-color-state-success)] cursor-pointer disabled:cursor-not-allowed"
+                            />
+                          )}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-static-sm mb-static-xs flex-wrap">
                             <PTag color={typeConfig.color}>{typeConfig.label}</PTag>
                             {alreadyLinked && <PTag color="notification-success-soft">Already in Case</PTag>}
+                            {!alreadyLinked && isSelected && <PTag color="background-frosted">Selected</PTag>}
                             <PText size="small" className="text-contrast-low">
                               {new Date(source.created_at).toLocaleString()}
                             </PText>
@@ -388,14 +439,6 @@ export default function DocumentsPage() {
                             {source.content}
                           </PText>
                         </div>
-                        <PButton
-                          variant="secondary"
-                          loading={addingGlobalSourceId === source.id}
-                          disabled={alreadyLinked || addingGlobalSourceId !== null}
-                          onClick={() => void addFromGlobalLibrary(source)}
-                        >
-                          {alreadyLinked ? "Added" : "Add to Case"}
-                        </PButton>
                       </div>
                     );
                   })}
