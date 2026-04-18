@@ -84,6 +84,7 @@ export interface AgentProfile {
 export interface SimulationRun {
   id: string;
   case_id: string;
+  job_id: string | null;
   run_type: RunType;
   strategy_type: StrategyType | null;
   strategy_message: string | null;
@@ -94,6 +95,94 @@ export interface SimulationRun {
   created_at: string;
   last_heartbeat_at: string | null;
   completed_at: string | null;
+}
+
+export interface AgentGenerationRequest {
+  case_id: string;
+}
+
+export interface AgentGenerationResponse {
+  case_id: string;
+  case_status: string;
+  agents: {
+    role: AgentRole;
+    stance: string;
+    concern: string;
+    emotional_sensitivity: number;
+    spread_tendency: number;
+    persona_description: string;
+    initial_beliefs: string[];
+  }[];
+}
+
+export interface SimulationSubmissionResponse {
+  run_id: string;
+  job_id: string;
+  job_status: string;
+  run_status: SimStatus;
+  should_poll: boolean;
+  job_type: string;
+  status_path: string | null;
+}
+
+export interface AsyncSubmissionResponse {
+  job_id: string;
+  job_type: string;
+  job_status: string;
+  should_poll: boolean;
+  status_path: string | null;
+}
+
+export interface GraphExtractionSubmissionResponse extends AsyncSubmissionResponse {
+  case_id: string;
+  document_count: number;
+}
+
+export interface JobStatusResponse {
+  id: string;
+  job_type: string;
+  status: string;
+  should_poll: boolean;
+  run_id: string | null;
+  last_error: string | null;
+  last_error_code: string | null;
+  locked_at: string | null;
+  heartbeat_at: string | null;
+  updated_at: string | null;
+  created_at: string | null;
+}
+
+export interface SimulationRunStatusResponse {
+  id: string;
+  job_type: string;
+  job_id: string | null;
+  status: SimStatus;
+  error_message: string | null;
+  total_rounds: number;
+  completed_rounds: number;
+  last_completed_round: number;
+  last_heartbeat_at: string | null;
+  created_at: string;
+  completed_at: string | null;
+  should_poll: boolean;
+}
+
+export interface GraphExtractionStatusResponse {
+  job_id: string;
+  case_id: string;
+  job_type: string;
+  status: string;
+  document_count: number;
+  processed_documents: number;
+  failed_documents: number;
+  entities_count: number;
+  relations_count: number;
+  claims_count: number;
+  last_error: string | null;
+  last_error_code: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  should_poll: boolean;
 }
 
 export interface AgentResponse {

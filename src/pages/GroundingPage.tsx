@@ -8,7 +8,8 @@ import {
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { getErrorMessage } from "../lib/errors";
-import { supabase, EDGE_FN_BASE, edgeHeaders } from "../lib/supabase";
+import { requestBackend, BackendApiError } from "../lib/backend";
+import { supabase } from "../lib/supabase";
 import type { CrisisCase, Entity, Relation, Claim } from "../lib/types";
 
 type IconName = NonNullable<ComponentProps<typeof PIcon>["name"]>;
@@ -72,20 +73,17 @@ export default function GroundingPage() {
     setGenerating(true);
     setError("");
     try {
-      const resp = await fetch(`${EDGE_FN_BASE}/generate-agents`, {
+      await requestBackend<{ case_id: string; case_status: string }>("api/agent-generation", {
         method: "POST",
-        headers: edgeHeaders,
         body: JSON.stringify({ case_id: caseId }),
       });
-      const result = await resp.json();
-      if (!resp.ok || result.error) {
-        setError(result.error || "Agent generation failed.");
-        setGenerating(false);
-        return;
-      }
       navigate(`/cases/${caseId}/simulation`);
     } catch (error: unknown) {
-      setError(getErrorMessage(error, "Agent generation failed."));
+      if (error instanceof BackendApiError) {
+        setError(error.message || "Agent generation failed.");
+      } else {
+        setError(getErrorMessage(error, "Agent generation failed."));
+      }
     }
     setGenerating(false);
   }

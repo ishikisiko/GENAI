@@ -4,7 +4,8 @@ This project can run fully against a local Supabase stack. The app uses:
 
 - local Postgres via Supabase
 - local Auth via Supabase
-- local Edge Functions for graph extraction, agent generation, and simulation
+- Python backend (`backend-api` + `backend-worker`) for simulation, graph extraction, and agent-generation orchestration
+- optional compatibility-only Supabase Edge Functions for legacy routes
 - local Vite frontend pointed at the local Supabase API
 
 ## Prerequisites
@@ -71,10 +72,12 @@ Start the local Supabase stack:
 npm run supabase:start
 ```
 
-Serve the Edge Functions locally:
+Start Python services (API + worker) for canonical product paths:
 
 ```bash
-npm run supabase:functions:serve
+cd backend
+backend-api
+backend-worker
 ```
 
 In another terminal, start the frontend:
@@ -86,6 +89,7 @@ npm run dev:local
 The local services are:
 
 - API: `http://127.0.0.1:54321`
+- Backend API: `http://127.0.0.1:8000`
 - Studio: `http://127.0.0.1:54323`
 - Frontend: `http://127.0.0.1:4173`
 
@@ -103,8 +107,8 @@ This reapplies the SQL files under [supabase/migrations](/root/code/Genai/supaba
 
 - `supabase/config.toml` is included so the repo is ready for local CLI usage.
 - The frontend uses `.env.local`, so you do not need to overwrite the existing `.env` that points at the hosted project.
-- The local stack still requires an OpenAI-compatible LLM configuration if you want the three Edge Functions to actually generate outputs.
-- All three functions now read LLM config from one shared layer:
+- The local stack still requires an OpenAI-compatible LLM configuration if you want Python-owned graph extraction and simulation to actually generate outputs.
+- The compatibility Edge Functions are optional and also use the same LLM config from their secrets.
   - `LLM_API_KEY`
   - `LLM_MODEL`
   - `LLM_BASE_URL`
@@ -114,7 +118,7 @@ This reapplies the SQL files under [supabase/migrations](/root/code/Genai/supaba
   - `ANTHROPIC_MODEL`
   - `ANTHROPIC_VERSION`
 - `OPENAI_API_KEY` is still accepted as a fallback for backward compatibility.
-- A bug in `run-simulation` was fixed so the function loads the crisis case by `id`, not `case_id`.
+- `run-simulation` is now exercised via Python worker paths.
 
 ## Useful commands
 

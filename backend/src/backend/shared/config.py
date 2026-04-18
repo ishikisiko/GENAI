@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,8 +27,25 @@ class BackendConfig(BaseSettings):
     worker_poll_interval_seconds: float = Field(default=1.0, alias="APP_WORKER_POLL_INTERVAL_SECONDS")
     worker_batch_size: int = Field(default=5, alias="APP_WORKER_BATCH_SIZE")
     database_url: str = Field(..., alias="APP_DATABASE_URL")
+    cors_origins: str = Field(default="*", alias="APP_CORS_ORIGINS")
     supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
     supabase_anon_key: str | None = Field(default=None, alias="SUPABASE_ANON_KEY")
+    llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    llm_model: str | None = Field(default=None, alias="LLM_MODEL")
+    anthropic_model: str | None = Field(default=None, alias="ANTHROPIC_MODEL")
+    llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
+    anthropic_base_url: str | None = Field(default=None, alias="ANTHROPIC_BASE_URL")
+    llm_provider: Literal["openai", "anthropic"] | None = Field(default=None, alias="LLM_PROVIDER")
+    llm_request_timeout_ms: int = Field(default=120000, alias="LLM_REQUEST_TIMEOUT_MS")
+    llm_max_tokens: int = Field(default=4096, alias="LLM_MAX_TOKENS")
+    simulation_stale_timeout_seconds: int = Field(default=1200, alias="SIMULATION_STALE_RUN_TIMEOUT_SECONDS")
+
+    def allowed_cors_origins(self) -> list[str]:
+        raw = [item.strip() for item in self.cors_origins.split(",")]
+        values = [item for item in raw if item]
+        return values or ["*"]
 
 
 def load_config(overrides: dict[str, object] | None = None) -> BackendConfig:

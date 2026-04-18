@@ -40,6 +40,7 @@ class Job(Base):
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     locked_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)

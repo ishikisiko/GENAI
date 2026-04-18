@@ -8,6 +8,9 @@ class ErrorCode(StrEnum):
     CONFIGURATION_ERROR = "CONFIGURATION_ERROR"
     DATABASE_ERROR = "DATABASE_ERROR"
     NOT_FOUND = "NOT_FOUND"
+    CONFLICT = "CONFLICT"
+    UNAUTHORIZED = "UNAUTHORIZED"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
     INVALID_TRANSITION = "INVALID_TRANSITION"
     EXTERNAL_DEPENDENCY_ERROR = "EXTERNAL_DEPENDENCY_ERROR"
     INTERNAL_ERROR = "INTERNAL_ERROR"
@@ -31,12 +34,14 @@ class ApplicationError(Exception):
         self.details = details or {}
         self.cause = cause
 
-    def to_payload(self) -> dict[str, Any]:
+    def to_payload(self, request_id: str | None = None, route: str | None = None) -> dict[str, Any]:
         return {
             "error": {
                 "code": self.code.value,
                 "message": self.message,
                 "details": self.details,
+                "request_id": request_id,
+                "route": route,
             }
         }
 

@@ -8,8 +8,19 @@ import {
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { getErrorMessage } from "../lib/errors";
-import { supabase, EDGE_FN_BASE, edgeHeaders } from "../lib/supabase";
-import type { AgentResponse, CrisisCase, AgentProfile, SimulationRun, RoundState, StrategyType } from "../lib/types";
+import { supabase } from "../lib/supabase";
+import { requestBackend } from "../lib/backend";
+import type {
+  AgentResponse,
+  CrisisCase,
+  AgentProfile,
+  JobStatusResponse,
+  SimulationRun,
+  SimulationRunStatusResponse,
+  SimulationSubmissionResponse,
+  RoundState,
+  StrategyType,
+} from "../lib/types";
 import { AGENT_ROLE_LABELS, AGENT_ROLE_COLORS, STRATEGY_LABELS, STRATEGY_DESCRIPTIONS, STRATEGY_ICONS } from "../lib/constants";
 
 type IconName = NonNullable<ComponentProps<typeof PIcon>["name"]>;
@@ -64,12 +75,8 @@ const ROLE_ICONS: Record<AgentProfile["role"], IconName> = {
   consumer: "user", supporter: "heart", critic: "dislike", media: "broadcast",
 };
 
-const STALE_SIMULATION_TIMEOUT_MS = 20 * 60 * 1000;
-
-function getSimulationHeartbeatMs(run: SimulationRun) {
-  const timestamp = run.last_heartbeat_at || run.created_at;
-  const parsed = Date.parse(timestamp);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
+function isActiveRun(run: SimulationRun) {
+  return run.status === "pending" || run.status === "running";
 }
 
 export default function SimulationPage() {
@@ -84,6 +91,10 @@ export default function SimulationPage() {
   const [runningBaseline, setRunningBaseline] = useState(false);
   const [runningIntervention, setRunningIntervention] = useState(false);
   const [error, setError] = useState("");
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<JobStatusResponse | null>(null);
+  const [runStatus, setRunStatus] = useState<SimulationRunStatusResponse | null>(null);
 
   const [strategyType, setStrategyType] = useState<StrategyType>("apology");
   const [strategyMessage, setStrategyMessage] = useState("");
@@ -100,36 +111,15 @@ export default function SimulationPage() {
     ]);
     setCrisisCase(c);
     setAgents(ags ?? []);
-    let runsData = rs ?? [];
-
-    const staleCutoffMs = Date.now() - STALE_SIMULATION_TIMEOUT_MS;
-    const staleRunIds = runsData
-      .filter((run) => run.status === "running")
-      .filter((run) => getSimulationHeartbeatMs(run) < staleCutoffMs)
-      .map((run) => run.id);
-
-    if (staleRunIds.length > 0) {
-      const nowIso = new Date().toISOString();
-      const { error: cleanupErr } = await supabase
-        .from("simulation_runs")
-        .update({
-          status: "failed",
-          error_message: "Simulation was interrupted or timed out before completion.",
-          completed_at: nowIso,
-          last_heartbeat_at: nowIso,
-        })
-        .in("id", staleRunIds);
-      if (!cleanupErr) {
-        const { data: refreshedRuns } = await supabase
-          .from("simulation_runs")
-          .select("*")
-          .eq("case_id", caseId!)
-          .order("created_at");
-        runsData = refreshedRuns ?? runsData;
-      }
-    }
-
+    const runsData = rs ?? [];
     setRuns(runsData);
+    const activeRun = [...runsData].reverse().find((run) => isActiveRun(run) && run.job_id);
+    setActiveRunId(activeRun?.id ?? null);
+    setActiveJobId(activeRun?.job_id ?? null);
+    if (!activeRun) {
+      setJobStatus(null);
+      setRunStatus(null);
+    }
 
     const runStates: Record<string, RoundState[]> = {};
     for (const run of runsData) {
@@ -147,7 +137,6 @@ export default function SimulationPage() {
   }, [caseId]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (caseId) void load();
   }, [caseId, load]);
 
@@ -155,15 +144,57 @@ export default function SimulationPage() {
     setInjectionRound((current) => Math.min(current, interventionTotalRounds));
   }, [interventionTotalRounds]);
 
+  useEffect(() => {
+    if (!activeJobId || !activeRunId) return undefined;
+
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    async function pollStatus() {
+      try {
+        const [nextJobStatus, nextRunStatus] = await Promise.all([
+          requestBackend<JobStatusResponse>(`api/jobs/${activeJobId}`),
+          requestBackend<SimulationRunStatusResponse>(`api/simulation-runs/${activeRunId}`),
+        ]);
+
+        if (cancelled) return;
+        setJobStatus(nextJobStatus);
+        setRunStatus(nextRunStatus);
+
+        if (!nextRunStatus.should_poll) {
+          setActiveJobId(null);
+          setActiveRunId(null);
+          await load();
+          return;
+        }
+
+        timeoutId = window.setTimeout(() => {
+          void pollStatus();
+        }, 2000);
+      } catch (pollError: unknown) {
+        if (cancelled) return;
+        setError(getErrorMessage(pollError, "Failed to poll simulation status."));
+      }
+    }
+
+    void pollStatus();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [activeJobId, activeRunId, load]);
+
   async function runSimulation(type: "baseline" | "intervention") {
     setError("");
     if (type === "baseline") setRunningBaseline(true);
     else setRunningIntervention(true);
 
     try {
-      const resp = await fetch(`${EDGE_FN_BASE}/run-simulation`, {
+      const result = await requestBackend<SimulationSubmissionResponse>("api/simulations", {
         method: "POST",
-        headers: edgeHeaders,
         body: JSON.stringify({
           case_id: caseId,
           run_type: type,
@@ -175,22 +206,55 @@ export default function SimulationPage() {
           }),
         }),
       });
-      const result = await resp.json();
-      if (!resp.ok || result.error) {
-        setError(result.error || "Simulation failed.");
-      } else {
-        await load();
-      }
+
+      setActiveJobId(result.job_id);
+      setActiveRunId(result.run_id);
+      setJobStatus({
+        id: result.job_id,
+        job_type: result.job_type,
+        status: result.job_status,
+        run_id: result.run_id,
+        last_error: null,
+        last_error_code: null,
+        locked_at: null,
+        heartbeat_at: null,
+        updated_at: null,
+        created_at: null,
+        should_poll: result.should_poll,
+      });
+      setRunStatus({
+        id: result.run_id,
+        job_type: "simulation.run",
+        job_id: result.job_id,
+        status: result.run_status,
+        error_message: null,
+        total_rounds: type === "baseline" ? baselineTotalRounds : interventionTotalRounds,
+        completed_rounds: 0,
+        last_completed_round: 0,
+        last_heartbeat_at: null,
+        created_at: new Date().toISOString(),
+        completed_at: null,
+        should_poll: result.should_poll,
+      });
+      await load();
     } catch (error: unknown) {
       setError(getErrorMessage(error, "Simulation failed."));
     }
+
     setRunningBaseline(false);
     setRunningIntervention(false);
   }
 
+  
+
   const baselineRun = runs.find((r) => r.run_type === "baseline" && r.status === "completed");
   const hasBaseline = !!baselineRun;
-  const hasRunningSim = runs.some((r) => r.status === "running");
+  const hasRunningSim = runs.some((r) => isActiveRun(r));
+  const runningProgress =
+    runStatus && activeRunId
+      ? `${runStatus.completed_rounds}/${runStatus.total_rounds} rounds complete`
+      : null;
+  const activeJobSummary = jobStatus ? `job ${jobStatus.status}` : null;
 
   if (loading) return (
     <div className="flex items-center justify-center min-h-full"><PSpinner size="medium" /></div>
@@ -282,7 +346,7 @@ export default function SimulationPage() {
                 )}
                 {runningBaseline && (
                   <PText size="small" className="text-contrast-medium text-center">
-                    Running {baselineTotalRounds} rounds with 4 agents... (~30s)
+                    Submitting baseline simulation...
                   </PText>
                 )}
               </div>
@@ -407,10 +471,12 @@ export default function SimulationPage() {
                       <PSpinner size="small" />
                       <div>
                         <PText size="small" weight="semi-bold">
-                          {runningBaseline ? "Running Baseline Simulation..." : `Running ${STRATEGY_LABELS[strategyType]} Intervention...`}
+                          {runningBaseline
+                            ? "Submitting Baseline Simulation..."
+                            : `Submitting ${STRATEGY_LABELS[strategyType]} Intervention...`}
                         </PText>
                         <PText size="small" className="text-contrast-medium">
-                          Each round calls the AI to generate realistic agent responses. This takes ~30 seconds.
+                          The worker will pick up the job and the page will poll lightweight status endpoints until the run finishes.
                         </PText>
                       </div>
                     </div>
@@ -418,7 +484,8 @@ export default function SimulationPage() {
 
                   {[...runs].reverse().map((run) => {
                     const states = roundStates[run.id] || [];
-                    const isRunning = run.status === "running";
+                    const isRunning = isActiveRun(run);
+                    const isTrackedActiveRun = run.id === activeRunId && runStatus;
                     return (
                       <div key={run.id} className="bg-surface border border-contrast-low rounded-lg overflow-hidden">
                         <div className="flex items-center justify-between px-fluid-sm py-static-md border-b border-contrast-low">
@@ -446,7 +513,21 @@ export default function SimulationPage() {
                         {isRunning && (
                           <div className="p-fluid-sm flex items-center gap-static-sm">
                             <PSpinner size="small" />
-                            <PText size="small" className="text-contrast-medium">Running simulation rounds...</PText>
+                            <PText size="small" className="text-contrast-medium">
+                              {run.status === "pending"
+                                ? activeJobSummary
+                                  ? `Queued for worker execution... (${activeJobSummary})`
+                                  : "Queued for worker execution..."
+                                : isTrackedActiveRun && runningProgress
+                                  ? `Running simulation rounds... ${runningProgress}`
+                                  : "Running simulation rounds..."}
+                            </PText>
+                          </div>
+                        )}
+
+                        {!isRunning && run.status === "failed" && run.error_message && (
+                          <div className="px-fluid-sm py-static-md border-b border-contrast-low bg-notification-error-soft">
+                            <PText size="small" className="text-error">{run.error_message}</PText>
                           </div>
                         )}
 

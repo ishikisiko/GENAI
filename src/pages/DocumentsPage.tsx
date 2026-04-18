@@ -8,8 +8,17 @@ import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { DOC_TYPE_LABELS } from "../lib/constants";
 import { getErrorMessage } from "../lib/errors";
-import { EDGE_FN_BASE, edgeHeaders, supabase } from "../lib/supabase";
-import type { CrisisCase, DocType, GlobalSourceDocument, SourceDocument, SourceOrigin } from "../lib/types";
+import { requestBackend } from "../lib/backend";
+import { supabase } from "../lib/supabase";
+import type {
+  CrisisCase,
+  DocType,
+  GlobalSourceDocument,
+  GraphExtractionStatusResponse,
+  GraphExtractionSubmissionResponse,
+  SourceDocument,
+  SourceOrigin,
+} from "../lib/types";
 
 type TagColor = NonNullable<ComponentProps<typeof PTag>["color"]>;
 
@@ -38,6 +47,7 @@ export default function DocumentsPage() {
   const [globalSources, setGlobalSources] = useState<GlobalSourceDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [extracting, setExtracting] = useState(false);
+  const [extractionStatus, setExtractionStatus] = useState<GraphExtractionStatusResponse | null>(null);
   const [addingCaseUpload, setAddingCaseUpload] = useState(false);
   const [addingGlobalSources, setAddingGlobalSources] = useState(false);
   const [error, setError] = useState("");
@@ -67,6 +77,44 @@ export default function DocumentsPage() {
   useEffect(() => {
     if (caseId) void load();
   }, [caseId, load]);
+
+  useEffect(() => {
+    if (!extracting || !extractionStatus?.should_poll) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const payload = await requestBackend<GraphExtractionStatusResponse>(
+            `api/graph-extractions/${extractionStatus.job_id}`,
+          );
+
+          setExtractionStatus(payload);
+          if (payload.should_poll) {
+            return;
+          }
+
+          setExtracting(false);
+          if (payload.status === "completed") {
+            setSuccess(
+              `Graph extracted: ${payload.entities_count} entities, ${payload.relations_count} relations, ${payload.claims_count} claims.`
+            );
+            await load();
+            window.setTimeout(() => navigate(`/cases/${caseId}/grounding`), 1500);
+            return;
+          }
+
+          setError(payload.last_error || "Extraction failed.");
+        } catch (requestError: unknown) {
+          setError(getErrorMessage(requestError, "Failed to refresh extraction status."));
+          setExtracting(false);
+        }
+      })();
+    }, 1500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [caseId, extracting, extractionStatus, load, navigate]);
 
   async function addCaseDocument() {
     if (!docContent.trim()) {
@@ -181,33 +229,37 @@ export default function DocumentsPage() {
       setError("Add at least one document before extracting.");
       return;
     }
-
     setExtracting(true);
+    setExtractionStatus(null);
     setError("");
     setSuccess("");
 
     try {
-      const resp = await fetch(`${EDGE_FN_BASE}/extract-graph`, {
+      const result = await requestBackend<GraphExtractionSubmissionResponse>("api/graph-extractions", {
         method: "POST",
-        headers: edgeHeaders,
-        body: JSON.stringify({ case_id: caseId, documents }),
+        body: JSON.stringify({ case_id: caseId }),
       });
-      const result = await resp.json();
-
-      if (!resp.ok || result.error) {
-        setError(result.error || "Extraction failed.");
-        setExtracting(false);
-        return;
-      }
-
-      setSuccess(`Graph extracted: ${result.entities_count} entities, ${result.relations_count} relations, ${result.claims_count} claims.`);
-      await load();
-      setTimeout(() => navigate(`/cases/${caseId}/grounding`), 1500);
+      setExtractionStatus({
+        job_id: result.job_id,
+        case_id: result.case_id,
+        job_type: result.job_type,
+        status: result.job_status,
+        document_count: result.document_count,
+        processed_documents: 0,
+        failed_documents: 0,
+        entities_count: 0,
+        relations_count: 0,
+        claims_count: 0,
+        last_error: null,
+        last_error_code: null,
+        created_at: null,
+        updated_at: null,
+        should_poll: result.should_poll,
+      });
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError, "Extraction failed."));
+      setExtracting(false);
     }
-
-    setExtracting(false);
   }
 
   const linkedGlobalSourceIds = useMemo(
@@ -473,8 +525,24 @@ export default function DocumentsPage() {
                 className="w-full"
                 onClick={extractGraph}
               >
-                {extracting ? "Extracting Graph..." : "Extract Knowledge Graph"}
+                {extracting
+                  ? extractionStatus?.status === "pending"
+                    ? "Queueing Extraction..."
+                    : "Extracting Graph..."
+                  : "Extract Knowledge Graph"}
               </PButton>
+
+              {extractionStatus && (
+                <PText size="small" className="text-contrast-medium mt-static-sm text-center">
+                  {extractionStatus.status === "pending"
+                    ? `Extraction queued for ${extractionStatus.document_count} documents.`
+                    : extractionStatus.status === "running"
+                      ? `Worker is processing ${extractionStatus.document_count} documents.`
+                      : extractionStatus.status === "completed"
+                        ? `Extraction completed with ${extractionStatus.entities_count} entities and ${extractionStatus.claims_count} claims.`
+                        : "Extraction failed."}
+                </PText>
+              )}
 
               {documents.length < 3 && (
                 <PText size="small" className="text-warning mt-static-sm text-center">

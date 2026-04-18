@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
+import asyncio
 
 from backend.entrypoints.api.main import create_app
 from backend.shared.config import BackendConfig
+from backend.shared.errors import DependencyError
 
 
 class _FakeDb:
@@ -35,18 +36,32 @@ def _build_config():
     )
 
 
-def test_liveness_and_readiness_success():
-    app = create_app(_build_config(), database=_FakeDb(), repository=_FakeRepo())
-    client = TestClient(app)
+def _get_endpoint(app, path: str, method: str):
+    for route in app.routes:
+        if getattr(route, "path", None) == path and method in getattr(route, "methods", set()):
+            return route.endpoint
+    raise AssertionError(f"Route not found: {method} {path}")
 
-    assert client.get("/health/live").status_code == 200
-    ready_resp = client.get("/health/ready")
-    assert ready_resp.status_code == 200
+
+def test_liveness_and_readiness_success():
+    fake_db = _FakeDb()
+    app = create_app(_build_config(), database=fake_db, repository=_FakeRepo())
+    live_endpoint = _get_endpoint(app, "/health/live", "GET")
+    ready_endpoint = _get_endpoint(app, "/health/ready", "GET")
+
+    assert asyncio.run(live_endpoint()) == {"status": "ok", "service": "backend-test"}
+    assert asyncio.run(ready_endpoint()) == {"status": "ready", "service": "backend-test"}
+    assert fake_db.ping_called is True
 
 
 def test_readiness_reports_dependency_error():
     app = create_app(_build_config(), database=_FakeDb(fail=True), repository=_FakeRepo())
-    client = TestClient(app)
-    response = client.get("/health/ready")
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "EXTERNAL_DEPENDENCY_ERROR"
+    ready_endpoint = _get_endpoint(app, "/health/ready", "GET")
+
+    try:
+        asyncio.run(ready_endpoint())
+    except DependencyError as exc:
+        assert exc.status_code == 503
+        assert exc.code.value == "EXTERNAL_DEPENDENCY_ERROR"
+    else:
+        raise AssertionError("Expected readiness endpoint to raise DependencyError")
