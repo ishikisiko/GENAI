@@ -4,13 +4,9 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from backend.services.agent_generation_contracts import (
-    AgentGenerationRequest,
-    AgentGenerationResponse,
-    GeneratedAgent,
-)
-from backend.services.simulation_repository import SimulationRepository
+from backend.services.agent_generation_contracts import AgentGenerationRequest, AgentGenerationResponse, GeneratedAgent
 from backend.services.llm_client import LlmJsonClient
+from backend.repository.simulation_repository import SimulationRepository
 from backend.shared.errors import ApplicationError, ErrorCode
 from backend.shared.logging import get_logger
 
@@ -109,7 +105,12 @@ Return ONLY a valid JSON object with key "agents" containing the array."""
 
         self._logger.info(
             "agent_generation_completed",
-            extra={"case_id": request.case_id, "agent_count": len(payload.agents), "at": datetime.utcnow().isoformat()},
+            extra={
+                "case_id": request.case_id,
+                "agent_count": len(payload.agents),
+                "case_status": "agents_ready",
+                "at": datetime.utcnow().isoformat(),
+            },
         )
 
         return AgentGenerationResponse(

@@ -8,7 +8,7 @@ import {
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { getErrorMessage } from "../lib/errors";
-import { requestBackend, BackendApiError } from "../lib/backend";
+import { generateAgents as requestAgentGeneration, BackendApiError } from "../lib/backend";
 import { supabase } from "../lib/supabase";
 import type { CrisisCase, Entity, Relation, Claim } from "../lib/types";
 
@@ -69,14 +69,11 @@ export default function GroundingPage() {
     if (caseId) void load();
   }, [caseId, load]);
 
-  async function generateAgents() {
+  async function handleGenerateAgents() {
     setGenerating(true);
     setError("");
     try {
-      await requestBackend<{ case_id: string; case_status: string }>("api/agent-generation", {
-        method: "POST",
-        body: JSON.stringify({ case_id: caseId }),
-      });
+      await requestAgentGeneration(caseId!);
       navigate(`/cases/${caseId}/simulation`);
     } catch (error: unknown) {
       if (error instanceof BackendApiError) {
@@ -225,7 +222,7 @@ export default function GroundingPage() {
                   loading={generating}
                   disabled={generating || isEmpty}
                   icon="arrow-right"
-                  onClick={generateAgents}
+                  onClick={handleGenerateAgents}
                 >
                   {generating ? "Generating..." : "Generate Agents"}
                 </PButton>

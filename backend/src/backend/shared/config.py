@@ -26,6 +26,7 @@ class BackendConfig(BaseSettings):
     request_timeout_seconds: int = Field(default=5, alias="APP_REQUEST_TIMEOUT_SECONDS")
     worker_poll_interval_seconds: float = Field(default=1.0, alias="APP_WORKER_POLL_INTERVAL_SECONDS")
     worker_batch_size: int = Field(default=5, alias="APP_WORKER_BATCH_SIZE")
+    product_auth_mode: Literal["public", "require_bearer"] = Field(default="public", alias="APP_PRODUCT_AUTH_MODE")
     database_url: str = Field(..., alias="APP_DATABASE_URL")
     cors_origins: str = Field(default="*", alias="APP_CORS_ORIGINS")
     supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")

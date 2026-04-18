@@ -6,7 +6,7 @@ This project can run fully against a local Supabase stack. The app uses:
 - local Auth via Supabase
 - Python backend (`backend-api` + `backend-worker`) for simulation, graph extraction, and agent-generation orchestration
 - optional compatibility-only Supabase Edge Functions for legacy routes
-- local Vite frontend pointed at the local Supabase API
+- local Vite frontend pointed at local Supabase plus the Python backend API
 
 ## Prerequisites
 
@@ -53,6 +53,8 @@ npm run supabase:status
 - `.env.local`
   - `VITE_SUPABASE_URL=http://127.0.0.1:54321`
   - `VITE_SUPABASE_ANON_KEY=<local anon key>`
+  - `VITE_BACKEND_API_BASE=http://127.0.0.1:8000`
+  - `VITE_BACKEND_URL=http://127.0.0.1:8000` (`VITE_BACKEND_API_BASE` is preferred; `VITE_BACKEND_URL` is kept as a compatibility alias)
 - `supabase/functions/.env`
   - `SUPABASE_URL=http://127.0.0.1:54321`
   - `SUPABASE_SERVICE_ROLE_KEY=<local service_role key>`
@@ -109,6 +111,11 @@ This reapplies the SQL files under [supabase/migrations](/root/code/Genai/supaba
 - The frontend uses `.env.local`, so you do not need to overwrite the existing `.env` that points at the hosted project.
 - The local stack still requires an OpenAI-compatible LLM configuration if you want Python-owned graph extraction and simulation to actually generate outputs.
 - The compatibility Edge Functions are optional and also use the same LLM config from their secrets.
+- The product-facing backend boundary is the Python API. The retained Edge Functions are compatibility-only rollback shims:
+  - `supabase/functions/run-simulation`
+  - `supabase/functions/extract-graph`
+  - `supabase/functions/generate-agents`
+- Product API requests now carry `x-request-id`. If the browser already has a Supabase session, the frontend also forwards its bearer token to the Python API.
   - `LLM_API_KEY`
   - `LLM_MODEL`
   - `LLM_BASE_URL`
@@ -118,15 +125,20 @@ This reapplies the SQL files under [supabase/migrations](/root/code/Genai/supaba
   - `ANTHROPIC_MODEL`
   - `ANTHROPIC_VERSION`
 - `OPENAI_API_KEY` is still accepted as a fallback for backward compatibility.
-- `run-simulation` is now exercised via Python worker paths.
+- `run-simulation`, `extract-graph`, and `generate-agents` now default to Python API ownership.
 
 ## Useful commands
 
 ```bash
 npm run supabase:start
 npm run supabase:status
-npm run supabase:functions:serve
 npm run supabase:db:reset
 npm run supabase:stop
 npm run dev:local
+```
+
+Serve Edge Functions only when you explicitly need compatibility-path rollback coverage:
+
+```bash
+npm run supabase:functions:serve
 ```

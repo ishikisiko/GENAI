@@ -6,6 +6,7 @@ from backend.domain.models import Job
 from backend.domain.simulation_records import RunType, SimulationStatus
 from backend.repository.job_repository import JobRepository
 from backend.repository.simulation_repository import SIMULATION_JOB_TYPE, SimulationRepository
+from backend.services.extraction_contracts import GRAPH_EXTRACTION_JOB_TYPE
 from backend.services.llm_client import LlmJsonClient
 from backend.services.simulation_contracts import (
     JobStatusResponse,
@@ -17,6 +18,7 @@ from backend.services.simulation_contracts import (
 )
 from backend.shared.config import BackendConfig
 from backend.shared.errors import ApplicationError, ErrorCode
+from backend.shared.logging import get_logger
 
 
 def get_default_strategy_message(strategy_type: str) -> str:
@@ -32,6 +34,10 @@ def get_default_strategy_message(strategy_type: str) -> str:
     )
 
 
+def _status_value(status: object) -> str:
+    return status.value if hasattr(status, "value") else str(status)
+
+
 class SimulationService:
     def __init__(
         self,
@@ -44,6 +50,7 @@ class SimulationService:
         self._simulation_repository = simulation_repository
         self._job_repository = job_repository
         self._llm_client = llm_client
+        self._logger = get_logger("backend.simulation")
 
     async def submit(self, request: SimulationSubmissionRequest) -> SimulationSubmissionResponse:
         crisis_case = await self._simulation_repository.get_case(request.case_id)
@@ -70,20 +77,40 @@ class SimulationService:
             )
 
         run, job = await self._simulation_repository.create_submission(request)
+        self._logger.info(
+            "simulation_submitted",
+            extra={
+                "case_id": request.case_id,
+                "run_id": str(run.id),
+                "job_id": str(job.id),
+                "run_type": request.run_type.value,
+            },
+        )
         return SimulationSubmissionResponse(
             run_id=str(run.id),
             job_id=str(job.id),
-            job_status=job.status.value,
-            run_status=run.status.value,
+            job_status=_status_value(job.status),
+            run_status=_status_value(run.status),
+            job_status_path=f"/api/jobs/{job.id}",
+            status_path=f"/api/simulation-runs/{run.id}",
         )
 
     async def get_job_status(self, job_id: str) -> JobStatusResponse:
         job = await self._job_repository.get_job(job_id)
         run = await self._simulation_repository.get_run_by_job_id(job_id)
+        status_path: str | None = None
+        if run is not None:
+            status_path = f"/api/simulation-runs/{run.id}"
+        elif job.job_type == GRAPH_EXTRACTION_JOB_TYPE:
+            status_path = f"/api/graph-extractions/{job.id}"
         return JobStatusResponse(
             id=str(job.id),
+            job_id=str(job.id),
             job_type=job.job_type,
-            status=job.status.value,
+            status=_status_value(job.status),
+            should_poll=_status_value(job.status) in {"pending", "running"},
+            job_status_path=f"/api/jobs/{job.id}",
+            status_path=status_path,
             run_id=str(run.id) if run else None,
             last_error=job.last_error,
             last_error_code=job.last_error_code,
@@ -102,6 +129,8 @@ class SimulationService:
             id=str(status["id"]),
             job_id=status["job_id"],
             status=run_status,
+            job_status_path=f"/api/jobs/{status['job_id']}" if status["job_id"] else "/api/jobs/{job_id}",
+            status_path=f"/api/simulation-runs/{status['id']}",
             error_message=status["error_message"],
             total_rounds=int(status["total_rounds"]),
             completed_rounds=int(status["completed_rounds"]),

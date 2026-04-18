@@ -36,9 +36,14 @@ class _FakeExtractionService:
         class _Response:
             def model_dump(self):
                 return {
+                    "outcome": "accepted",
                     "case_id": request.case_id,
                     "job_id": "job-graph-123",
+                    "job_type": "graph.extract",
                     "job_status": "pending",
+                    "job_status_path": "/api/jobs/job-graph-123",
+                    "status_path": "/api/graph-extractions/job-graph-123",
+                    "should_poll": True,
                     "document_count": 3,
                 }
 
@@ -48,10 +53,13 @@ class _FakeExtractionService:
         class _Response:
             def model_dump(self):
                 return {
+                    "outcome": "status",
                     "job_id": job_id,
                     "case_id": "case-123",
                     "job_type": "graph.extract",
                     "status": "running",
+                    "job_status_path": f"/api/jobs/{job_id}",
+                    "status_path": f"/api/graph-extractions/{job_id}",
                     "document_count": 3,
                     "processed_documents": 1,
                     "failed_documents": 0,
@@ -98,6 +106,8 @@ def test_submit_graph_extraction_endpoint_returns_job_metadata():
 
     assert response["job_id"] == "job-graph-123"
     assert response["document_count"] == 3
+    assert response["job_status_path"] == "/api/jobs/job-graph-123"
+    assert response["status_path"] == "/api/graph-extractions/job-graph-123"
 
 
 def test_graph_extraction_status_endpoint_is_poll_friendly():

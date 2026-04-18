@@ -22,6 +22,7 @@ from backend.services.extraction_contracts import (
 )
 from backend.services.llm_client import LlmJsonClient
 from backend.shared.errors import ApplicationError, ErrorCode
+from backend.shared.logging import get_logger
 
 
 def normalize_name(value: str) -> str:
@@ -30,6 +31,10 @@ def normalize_name(value: str) -> str:
 
 def normalize_text(value: str) -> str:
     return " ".join(value.strip().split()).lower()
+
+
+def _status_value(status: object) -> str:
+    return status.value if hasattr(status, "value") else str(status)
 
 
 def normalize_document_graph(source_doc_id: str, raw_graph: ExtractedDocumentGraph) -> DocumentGraphFragment:
@@ -137,6 +142,7 @@ class ExtractionService:
         self._extraction_repository = extraction_repository
         self._job_repository = job_repository
         self._llm_client = llm_client
+        self._logger = get_logger("backend.graph_extraction")
 
     async def submit(self, request: GraphExtractionSubmissionRequest) -> GraphExtractionSubmissionResponse:
         crisis_case = await self._extraction_repository.get_case(request.case_id)
@@ -159,10 +165,16 @@ class ExtractionService:
             case_id=request.case_id,
             document_ids=[str(document.id) for document in documents],
         )
+        self._logger.info(
+            "graph_extraction_submitted",
+            extra={"case_id": request.case_id, "job_id": str(job.id), "document_count": len(documents)},
+        )
         return GraphExtractionSubmissionResponse(
             case_id=request.case_id,
             job_id=str(job.id),
-            job_status=job.status.value,
+            job_status=_status_value(job.status),
+            job_status_path=f"/api/jobs/{job.id}",
+            status_path=f"/api/graph-extractions/{job.id}",
             document_count=len(documents),
         )
 
@@ -184,7 +196,9 @@ class ExtractionService:
             job_id=str(job.id),
             case_id=payload.case_id,
             job_type=job.job_type,
-            status=job.status.value,
+            status=_status_value(job.status),
+            job_status_path=f"/api/jobs/{job.id}",
+            status_path=f"/api/graph-extractions/{job.id}",
             document_count=result_summary.document_count,
             processed_documents=result_summary.processed_documents,
             failed_documents=result_summary.failed_documents,
@@ -195,7 +209,7 @@ class ExtractionService:
             last_error_code=job.last_error_code,
             created_at=job.created_at.astimezone(timezone.utc).isoformat() if job.created_at else None,
             updated_at=job.updated_at.astimezone(timezone.utc).isoformat() if job.updated_at else None,
-            should_poll=job.status in {JobStatus.PENDING, JobStatus.RUNNING},
+            should_poll=_status_value(job.status) in {JobStatus.PENDING.value, JobStatus.RUNNING.value},
         )
 
     async def handle_job(self, job: Job) -> dict[str, object]:

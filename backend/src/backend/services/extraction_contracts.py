@@ -27,6 +27,7 @@ class GraphExtractionJobPayload(BaseModel):
 class GraphExtractionSubmissionResponse(AsyncSubmissionResponse):
     case_id: str
     job_type: str = "graph.extract"
+    job_status_path: str = "/api/jobs/{job_id}"
     status_path: str = "/api/graph-extractions/{job_id}"
     document_count: int
 
@@ -44,6 +45,9 @@ class GraphExtractionResultSummary(BaseModel):
 class GraphExtractionStatusResponse(AsyncStatusResponse):
     job_id: str
     case_id: str
+    job_type: str = "graph.extract"
+    job_status_path: str = "/api/jobs/{job_id}"
+    status_path: str = "/api/graph-extractions/{job_id}"
     document_count: int
     processed_documents: int
     failed_documents: int

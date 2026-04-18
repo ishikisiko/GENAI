@@ -1,5 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
+// Compatibility-only rollback shim. The primary product path is POST /api/agent-generation.
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -73,6 +75,8 @@ Deno.serve(async (req: Request) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(req.headers.get("authorization") ? { Authorization: req.headers.get("authorization")! } : {}),
+        ...(req.headers.get("x-request-id") ? { "x-request-id": req.headers.get("x-request-id")! } : {}),
       },
       body: JSON.stringify({ case_id: body.case_id }),
     });

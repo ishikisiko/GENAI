@@ -52,6 +52,7 @@ class SimulationJobPayload(BaseModel):
 class SimulationSubmissionResponse(AsyncSubmissionResponse):
     run_id: str
     job_type: str = "simulation.run"
+    job_status_path: str = "/api/jobs/{job_id}"
     status_path: str = "/api/simulation-runs/{run_id}"
     run_status: str
 
@@ -70,6 +71,9 @@ class SimulationRunStatusResponse(AsyncStatusResponse):
     id: str
     job_id: str | None = None
     status: SimulationStatus
+    job_type: str = "simulation.run"
+    job_status_path: str = "/api/jobs/{job_id}"
+    status_path: str = "/api/simulation-runs/{id}"
     error_message: str | None = None
     total_rounds: int
     completed_rounds: int

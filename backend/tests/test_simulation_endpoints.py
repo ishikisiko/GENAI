@@ -25,10 +25,15 @@ class _FakeSimulationService:
         class _Response:
             def model_dump(self):
                 return {
+                    "outcome": "accepted",
                     "run_id": "run-123",
                     "job_id": "job-123",
+                    "job_type": "simulation.run",
                     "job_status": "pending",
+                    "job_status_path": "/api/jobs/job-123",
+                    "status_path": "/api/simulation-runs/run-123",
                     "run_status": "pending",
+                    "should_poll": True,
                 }
 
         return _Response()
@@ -37,9 +42,14 @@ class _FakeSimulationService:
         class _Response:
             def model_dump(self):
                 return {
+                    "outcome": "status",
                     "id": job_id,
+                    "job_id": job_id,
                     "job_type": "simulation.run",
                     "status": "running",
+                    "job_status_path": f"/api/jobs/{job_id}",
+                    "status_path": "/api/simulation-runs/run-123",
+                    "should_poll": True,
                     "run_id": "run-123",
                     "last_error": None,
                     "last_error_code": None,
@@ -55,9 +65,38 @@ class _FakeSimulationService:
         class _Response:
             def model_dump(self, mode: str = "python"):
                 return {
+                    "outcome": "status",
                     "id": run_id,
                     "job_id": "job-123",
+                    "job_type": "simulation.run",
                     "status": "running",
+                    "job_status_path": "/api/jobs/job-123",
+                    "status_path": f"/api/simulation-runs/{run_id}",
+                    "error_message": None,
+                    "total_rounds": 5,
+                    "completed_rounds": 2,
+                    "last_completed_round": 2,
+                    "last_heartbeat_at": None,
+                    "created_at": "2026-04-17T00:00:00+00:00",
+                    "completed_at": None,
+                    "should_poll": True,
+                }
+
+        return _Response()
+
+
+class _FakeSimulationServiceWithoutJobId(_FakeSimulationService):
+    async def get_run_status(self, run_id: str):
+        class _Response:
+            def model_dump(self, mode: str = "python"):
+                return {
+                    "outcome": "status",
+                    "id": run_id,
+                    "job_id": None,
+                    "job_type": "simulation.run",
+                    "status": "running",
+                    "job_status_path": "/api/jobs/{job_id}",
+                    "status_path": f"/api/simulation-runs/{run_id}",
                     "error_message": None,
                     "total_rounds": 5,
                     "completed_rounds": 2,
@@ -108,6 +147,8 @@ def test_submit_simulation_endpoint_returns_ids():
     )
     assert response["job_id"] == "job-123"
     assert response["run_id"] == "run-123"
+    assert response["job_status_path"] == "/api/jobs/job-123"
+    assert response["status_path"] == "/api/simulation-runs/run-123"
 
 
 def test_job_and_run_status_endpoints_are_poll_friendly():
@@ -126,3 +167,18 @@ def test_job_and_run_status_endpoints_are_poll_friendly():
     assert job_response["run_id"] == "run-123"
     assert run_response["completed_rounds"] == 2
     assert run_response["should_poll"] is True
+
+
+def test_run_status_endpoint_handles_missing_job_id_without_crashing():
+    app = create_app(
+        _build_config(),
+        database=_FakeDb(),
+        repository=_FakeRepo(),
+        simulation_service=_FakeSimulationServiceWithoutJobId(),
+    )
+    run_endpoint = _get_endpoint(app, "/api/simulation-runs/{run_id}", "GET")
+
+    run_response = asyncio.run(run_endpoint("run-123"))
+
+    assert run_response["job_id"] is None
+    assert run_response["job_status_path"] == "/api/jobs/{job_id}"

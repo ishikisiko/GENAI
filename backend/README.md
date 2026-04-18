@@ -4,8 +4,10 @@ This folder contains a minimal, additive Python backend workspace that hosts:
 
 - API entrypoint with health and operations endpoints.
 - Worker entrypoint with polling and job-attempt recording.
+- Shared product request context with request IDs, product/operator boundary tagging, and configurable bearer-header enforcement.
 - Async simulation submission, execution, heartbeat, and polling endpoints.
 - Async graph extraction submission, worker execution, and polling endpoints.
+- Synchronous Python-owned agent generation for the grounding-to-simulation handoff.
 - Shared configuration, structured logging, error taxonomy, and data-access layers.
 - Postgres-backed durable job schema and repository helpers (`jobs` + `job_attempts`).
 - Migration tooling to bootstrap and track backend schema changes.
@@ -33,10 +35,13 @@ Graph extraction rollout notes live in [docs/graph-extraction-rollout.md](docs/g
 ## Design notes
 
 - The product default call chain is Python API + worker for simulation and graph extraction, with Supabase Edge Functions retained only as optional compatibility shims.
-- The documents page uses `VITE_BACKEND_URL` to call `POST /api/graph-extractions`.
+- `POST /api/agent-generation` is the synchronous product path for agent generation.
+- The documents page uses `VITE_BACKEND_API_BASE` (or the compatibility alias `VITE_BACKEND_URL`) to call `POST /api/graph-extractions`.
 - The simulation page uses `POST /api/simulations`.
 - The backend treats Supabase as the platform owner for Postgres, Auth, and RLS.
 - Realtime is optional and not required for core API/worker operation.
+- Async submissions now return both the canonical operator status path (`job_status_path`) and the product-facing status path (`status_path`).
+- `APP_PRODUCT_AUTH_MODE=public` preserves the current public product flow. Switch to `require_bearer` when rollout requires product endpoints to reject missing bearer headers.
 
 ## Migration workflow
 

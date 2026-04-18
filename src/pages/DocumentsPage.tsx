@@ -8,14 +8,13 @@ import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { DOC_TYPE_LABELS } from "../lib/constants";
 import { getErrorMessage } from "../lib/errors";
-import { requestBackend } from "../lib/backend";
+import { fetchGraphExtractionStatus, submitGraphExtraction } from "../lib/backend";
 import { supabase } from "../lib/supabase";
 import type {
   CrisisCase,
   DocType,
   GlobalSourceDocument,
   GraphExtractionStatusResponse,
-  GraphExtractionSubmissionResponse,
   SourceDocument,
   SourceOrigin,
 } from "../lib/types";
@@ -86,9 +85,7 @@ export default function DocumentsPage() {
     const timeoutId = window.setTimeout(() => {
       void (async () => {
         try {
-          const payload = await requestBackend<GraphExtractionStatusResponse>(
-            `api/graph-extractions/${extractionStatus.job_id}`,
-          );
+          const payload = await fetchGraphExtractionStatus(extractionStatus.status_path || extractionStatus.job_id);
 
           setExtractionStatus(payload);
           if (payload.should_poll) {
@@ -235,15 +232,15 @@ export default function DocumentsPage() {
     setSuccess("");
 
     try {
-      const result = await requestBackend<GraphExtractionSubmissionResponse>("api/graph-extractions", {
-        method: "POST",
-        body: JSON.stringify({ case_id: caseId }),
-      });
+      const result = await submitGraphExtraction(caseId!);
       setExtractionStatus({
+        outcome: "status",
         job_id: result.job_id,
         case_id: result.case_id,
         job_type: result.job_type,
         status: result.job_status,
+        job_status_path: result.job_status_path,
+        status_path: result.status_path,
         document_count: result.document_count,
         processed_documents: 0,
         failed_documents: 0,

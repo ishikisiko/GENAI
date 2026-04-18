@@ -14,6 +14,7 @@ from backend.repository.simulation_repository import SimulationRepository
 from backend.shared.config import BackendConfig
 from backend.shared.errors import ApplicationError, DependencyError, ErrorCode
 from backend.shared.logging import configure_logging, correlation_context, get_logger
+from backend.shared.request_context import build_request_context
 from backend.services.extraction_contracts import GraphExtractionSubmissionRequest
 from backend.services.extraction_service import ExtractionService
 from backend.services.llm_client import LlmJsonClient
@@ -21,6 +22,21 @@ from backend.services.agent_generation_contracts import AgentGenerationRequest
 from backend.services.agent_generation_service import AgentGenerationService
 from backend.services.simulation_contracts import SimulationSubmissionRequest
 from backend.services.simulation_service import SimulationService
+
+
+def _apply_cors_headers(request: Request, response: Response, config: BackendConfig) -> None:
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+
+    allowed_origins = config.allowed_cors_origins()
+    if "*" in allowed_origins:
+        response.headers.setdefault("Access-Control-Allow-Origin", "*")
+        return
+
+    if origin in allowed_origins:
+        response.headers.setdefault("Access-Control-Allow-Origin", origin)
+        response.headers.setdefault("Vary", "Origin")
 
 
 @asynccontextmanager
@@ -77,14 +93,45 @@ def create_app(
     async def request_context_middleware(request: Request, call_next):
         request_id = request.headers.get("x-request-id", str(uuid4()))
         request.state.request_id = request_id
+        if request.method == "OPTIONS" and request.url.path.startswith("/api/"):
+            response = await call_next(request)
+            response.headers["x-request-id"] = request_id
+            _apply_cors_headers(request, response, config)
+            return response
+        try:
+            request_context = build_request_context(request, config, request_id)
+        except ApplicationError as exc:
+            payload = exc.to_payload(request_id=request_id, route=request.url.path)
+            response = JSONResponse(status_code=exc.status_code, content=payload)
+            response.headers["x-request-id"] = request_id
+            _apply_cors_headers(request, response, config)
+            return response
+
+        request.state.request_context = request_context
         response: Response
         with correlation_context(
             request_id=request_id,
             route=request.url.path,
             method=request.method,
+            boundary=request_context.boundary,
+            auth_mode=request_context.auth_mode,
+            authenticated=request_context.authenticated,
+            auth_subject=request_context.auth_subject,
         ):
-            response = await call_next(request)
+            try:
+                response = await call_next(request)
+            except Exception:
+                logger.exception("unhandled_error", extra={"path": str(request.url)})
+                payload = ApplicationError(
+                    code=ErrorCode.INTERNAL_ERROR,
+                    message="Unexpected server error",
+                    status_code=500,
+                    details={"route": request.url.path},
+                ).to_payload(request_id=request_id, route=request.url.path)
+                response = JSONResponse(status_code=500, content=payload)
+
             response.headers["x-request-id"] = request_id
+            _apply_cors_headers(request, response, config)
         return response
 
     @app.exception_handler(ApplicationError)

@@ -9,7 +9,7 @@ import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { getErrorMessage } from "../lib/errors";
 import { supabase } from "../lib/supabase";
-import { requestBackend } from "../lib/backend";
+import { fetchJobStatus, fetchSimulationRunStatus, submitSimulation } from "../lib/backend";
 import type {
   AgentResponse,
   CrisisCase,
@@ -17,7 +17,6 @@ import type {
   JobStatusResponse,
   SimulationRun,
   SimulationRunStatusResponse,
-  SimulationSubmissionResponse,
   RoundState,
   StrategyType,
 } from "../lib/types";
@@ -147,14 +146,18 @@ export default function SimulationPage() {
   useEffect(() => {
     if (!activeJobId || !activeRunId) return undefined;
 
+    const jobId = activeJobId;
+    const runId = activeRunId;
+    const jobStatusPath = jobStatus?.job_status_path || jobId;
+    const runStatusPath = runStatus?.status_path || runId;
     let cancelled = false;
     let timeoutId: number | undefined;
 
     async function pollStatus() {
       try {
         const [nextJobStatus, nextRunStatus] = await Promise.all([
-          requestBackend<JobStatusResponse>(`api/jobs/${activeJobId}`),
-          requestBackend<SimulationRunStatusResponse>(`api/simulation-runs/${activeRunId}`),
+          fetchJobStatus(jobStatusPath),
+          fetchSimulationRunStatus(runStatusPath),
         ]);
 
         if (cancelled) return;
@@ -185,7 +188,7 @@ export default function SimulationPage() {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [activeJobId, activeRunId, load]);
+  }, [activeJobId, activeRunId, jobStatus?.job_status_path, load, runStatus?.status_path]);
 
   async function runSimulation(type: "baseline" | "intervention") {
     setError("");
@@ -193,26 +196,27 @@ export default function SimulationPage() {
     else setRunningIntervention(true);
 
     try {
-      const result = await requestBackend<SimulationSubmissionResponse>("api/simulations", {
-        method: "POST",
-        body: JSON.stringify({
-          case_id: caseId,
-          run_type: type,
-          total_rounds: type === "baseline" ? baselineTotalRounds : interventionTotalRounds,
-          ...(type === "intervention" && {
-            strategy_type: strategyType,
-            strategy_message: strategyMessage || undefined,
-            injection_round: injectionRound,
-          }),
+      const result = await submitSimulation({
+        case_id: caseId!,
+        run_type: type,
+        total_rounds: type === "baseline" ? baselineTotalRounds : interventionTotalRounds,
+        ...(type === "intervention" && {
+          strategy_type: strategyType,
+          strategy_message: strategyMessage || undefined,
+          injection_round: injectionRound,
         }),
       });
 
       setActiveJobId(result.job_id);
       setActiveRunId(result.run_id);
       setJobStatus({
+        outcome: "status",
         id: result.job_id,
+        job_id: result.job_id,
         job_type: result.job_type,
         status: result.job_status,
+        job_status_path: result.job_status_path,
+        status_path: result.status_path,
         run_id: result.run_id,
         last_error: null,
         last_error_code: null,
@@ -223,10 +227,13 @@ export default function SimulationPage() {
         should_poll: result.should_poll,
       });
       setRunStatus({
+        outcome: "status",
         id: result.run_id,
         job_type: "simulation.run",
         job_id: result.job_id,
         status: result.run_status,
+        job_status_path: result.job_status_path,
+        status_path: result.status_path,
         error_message: null,
         total_rounds: type === "baseline" ? baselineTotalRounds : interventionTotalRounds,
         completed_rounds: 0,

@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, conint, model_validator
 
+from backend.services.contracts import SyncResponse
+
 
 class AgentGenerationRequest(BaseModel):
     case_id: str
@@ -24,7 +26,7 @@ class GeneratedAgent(BaseModel):
         return self
 
 
-class AgentGenerationResponse(BaseModel):
+class AgentGenerationResponse(SyncResponse):
     case_id: str
     case_status: str
     agents: list[GeneratedAgent]

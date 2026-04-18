@@ -102,6 +102,7 @@ export interface AgentGenerationRequest {
 }
 
 export interface AgentGenerationResponse {
+  outcome: "completed";
   case_id: string;
   case_status: string;
   agents: {
@@ -116,20 +117,24 @@ export interface AgentGenerationResponse {
 }
 
 export interface SimulationSubmissionResponse {
+  outcome: "accepted";
   run_id: string;
   job_id: string;
   job_status: string;
   run_status: SimStatus;
   should_poll: boolean;
   job_type: string;
+  job_status_path: string;
   status_path: string | null;
 }
 
 export interface AsyncSubmissionResponse {
+  outcome: "accepted";
   job_id: string;
   job_type: string;
   job_status: string;
   should_poll: boolean;
+  job_status_path: string;
   status_path: string | null;
 }
 
@@ -139,10 +144,14 @@ export interface GraphExtractionSubmissionResponse extends AsyncSubmissionRespon
 }
 
 export interface JobStatusResponse {
+  outcome: "status";
   id: string;
+  job_id: string;
   job_type: string;
   status: string;
   should_poll: boolean;
+  job_status_path: string;
+  status_path: string | null;
   run_id: string | null;
   last_error: string | null;
   last_error_code: string | null;
@@ -153,10 +162,13 @@ export interface JobStatusResponse {
 }
 
 export interface SimulationRunStatusResponse {
+  outcome: "status";
   id: string;
   job_type: string;
   job_id: string | null;
   status: SimStatus;
+  job_status_path: string;
+  status_path: string | null;
   error_message: string | null;
   total_rounds: number;
   completed_rounds: number;
@@ -168,10 +180,13 @@ export interface SimulationRunStatusResponse {
 }
 
 export interface GraphExtractionStatusResponse {
+  outcome: "status";
   job_id: string;
   case_id: string;
   job_type: string;
   status: string;
+  job_status_path: string;
+  status_path: string | null;
   document_count: number;
   processed_documents: number;
   failed_documents: number;

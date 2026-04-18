@@ -1,6 +1,6 @@
 # Async Simulation Rollout
 
-This change moves `run-simulation` execution onto the Python API + worker while keeping the legacy Supabase Edge Function available for rollback.
+This change moves `run-simulation` execution onto the Python API + worker while keeping the legacy Supabase Edge Function available only as a compatibility-path rollback shim.
 
 ## Migration
 
@@ -15,18 +15,19 @@ This change moves `run-simulation` execution onto the Python API + worker while 
 4. Start the API and worker:
    - `cd backend && backend-api`
    - `cd backend && backend-worker`
-5. Keep frontend `VITE_BACKEND_URL=http://127.0.0.1:8000` so simulation calls use the Python API by default.
+5. Keep frontend `VITE_BACKEND_API_BASE=http://127.0.0.1:8000` (or the compatibility alias `VITE_BACKEND_URL`) so simulation calls use the Python API by default.
 
 ## Runtime Expectations
 
-- Submission is now lightweight: `POST /api/simulations` creates a `simulation_runs` row and a durable `jobs` row, then returns immediately.
+- Submission is now lightweight: `POST /api/simulations` creates a `simulation_runs` row and a durable `jobs` row, then returns immediately with `job_status_path` and `status_path`.
 - The worker owns execution. It heartbeats both `jobs.heartbeat_at` and `simulation_runs.last_heartbeat_at` while rounds are running.
 - The UI polls `GET /api/jobs/{job_id}` and `GET /api/simulation-runs/{run_id}` until `should_poll` becomes `false`, then reloads full run results from Supabase.
 - Stale recovery is backend-owned. Running jobs whose heartbeat exceeds `SIMULATION_STALE_RUN_TIMEOUT_SECONDS` are failed by the worker and their linked simulation run is marked failed with a timeout/interruption message.
+- API failures include `x-request-id`, and backend logs correlate request IDs with job IDs for operator tracing.
 
 ## Rollback
 
-1. If needed for rollback, route simulation submissions back to the legacy Supabase `run-simulation` edge function until legacy behavior is no longer required.
+1. If needed for rollback, explicitly route simulation submissions back to the legacy compatibility-only Supabase `run-simulation` edge function until legacy behavior is no longer required.
 3. Leave existing async-created `jobs` and `simulation_runs` rows in place for investigation; the result tables remain readable and compatible.
 
 ## Operational Notes
