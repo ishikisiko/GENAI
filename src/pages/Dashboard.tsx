@@ -21,21 +21,31 @@ export default function Dashboard() {
   const [demoExists, setDemoExists] = useState(false);
   const navigate = useNavigate();
 
-  const loadCases = useCallback(async () => {
-    setLoading(true);
+  const fetchCases = useCallback(async () => {
     const [{ data }, alreadySeeded] = await Promise.all([
       supabase.from("crisis_cases").select("*").order("created_at", { ascending: false }),
       isDemoAlreadySeeded(),
     ]);
-    setCases(data ?? []);
-    setDemoExists(alreadySeeded);
-    setLoading(false);
+    return { cases: data ?? [], alreadySeeded };
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadCases();
-  }, [loadCases]);
+    let cancelled = false;
+
+    async function runInitialLoad() {
+      const { cases, alreadySeeded } = await fetchCases();
+      if (cancelled) return;
+      setCases(cases);
+      setDemoExists(alreadySeeded);
+      setLoading(false);
+    }
+
+    void runInitialLoad();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchCases]);
 
   async function handleLoadDemo() {
     setDemoLoading(true);

@@ -1,252 +1,485 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ComponentProps } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   PButton, PButtonPure, PHeading, PIcon, PInlineNotification, PSpinner, PTag, PText,
 } from "@porsche-design-system/components-react";
 import PageHeader from "../components/PageHeader";
-import { supabase } from "../lib/supabase";
-import type { DocType, GlobalSourceDocument } from "../lib/types";
-import { DOC_TYPE_LABELS } from "../lib/constants";
+import {
+  createSourceTopic,
+  createSourceTopicAssignment,
+  fetchSourceRegistry,
+  fetchSourceTopics,
+  fetchSourceUsage,
+  removeSourceTopicAssignment,
+} from "../lib/backend";
+import { getErrorMessage } from "../lib/errors";
+import type { SourceRegistrySource, SourceTopic, SourceUsageResponse } from "../lib/types";
 
-const DOC_TYPES: { value: DocType; label: string; desc: string; color: "notification-info-soft" | "notification-warning-soft" | "notification-success-soft" }[] = [
-  { value: "news", label: "News Report", desc: "Media coverage or journalism", color: "notification-info-soft" },
-  { value: "complaint", label: "User Complaint", desc: "Consumer feedback or complaint", color: "notification-warning-soft" },
-  { value: "statement", label: "Official Statement", desc: "Corporate or government statement", color: "notification-success-soft" },
+type TagColor = NonNullable<ComponentProps<typeof PTag>["color"]>;
+
+const SMART_VIEWS = [
+  { key: "unassigned", label: "Unassigned", desc: "Needs topic cleanup" },
+  { key: "recently_used", label: "Recently Used", desc: "Already reused in cases" },
+  { key: "high_authority", label: "High Authority", desc: "Official or trusted sources" },
+  { key: "duplicate_candidates", label: "Duplicate Candidates", desc: "Same URL or content hash" },
+  { key: "stale", label: "Stale Sources", desc: "Needs freshness review" },
 ];
 
+const SOURCE_KINDS = ["", "news", "official", "complaint", "social", "research"];
+const AUTHORITY_LEVELS = ["", "high", "medium", "low"];
+const FRESHNESS_STATUSES = ["", "current", "stale", "unknown"];
+const SOURCE_STATUSES = ["", "active", "duplicate_candidate", "stale", "archived"];
+
+type View =
+  | { type: "all" }
+  | { type: "smart"; key: string }
+  | { type: "topic"; topicId: string };
+
+function tagColor(value: string): TagColor {
+  if (value === "official" || value === "high" || value === "active") return "notification-success-soft";
+  if (value === "stale" || value === "duplicate_candidate") return "notification-warning-soft";
+  if (value === "complaint" || value === "social" || value === "low") return "notification-error-soft";
+  return "background-frosted";
+}
+
+function viewKey(view: View): string {
+  if (view.type === "all") return "all";
+  if (view.type === "smart") return `smart:${view.key}`;
+  return `topic:${view.topicId}`;
+}
+
 export default function GlobalSourcesPage() {
-  const [sources, setSources] = useState<GlobalSourceDocument[]>([]);
+  const [topics, setTopics] = useState<SourceTopic[]>([]);
+  const [sources, setSources] = useState<SourceRegistrySource[]>([]);
+  const [selectedSourceId, setSelectedSourceId] = useState("");
+  const [usage, setUsage] = useState<SourceUsageResponse | null>(null);
+  const [view, setView] = useState<View>({ type: "smart", key: "unassigned" });
   const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
-  const [showForm, setShowForm] = useState(false);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [showTopicForm, setShowTopicForm] = useState(false);
+  const [topicName, setTopicName] = useState("");
+  const [topicType, setTopicType] = useState("collection");
+  const [query, setQuery] = useState("");
+  const [sourceKind, setSourceKind] = useState("");
+  const [authorityLevel, setAuthorityLevel] = useState("");
+  const [freshnessStatus, setFreshnessStatus] = useState("");
+  const [sourceStatus, setSourceStatus] = useState("");
+  const [assignTopicId, setAssignTopicId] = useState("");
+  const [assignReason, setAssignReason] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [query, setQuery] = useState("");
 
-  const [docTitle, setDocTitle] = useState("");
-  const [docContent, setDocContent] = useState("");
-  const [docType, setDocType] = useState<DocType>("news");
+  const selectedSource = sources.find((source) => source.id === selectedSourceId) || sources[0] || null;
+
+  const loadTopics = useCallback(async () => {
+    setTopics(await fetchSourceTopics());
+  }, []);
 
   const loadSources = useCallback(async () => {
-    setLoading(true);
-    const { data, error: loadError } = await supabase
-      .from("global_source_documents")
-      .select("*")
-      .order("created_at", { ascending: false });
+    const response = await fetchSourceRegistry({
+      topic_id: view.type === "topic" ? view.topicId : undefined,
+      smart_view: view.type === "smart" ? view.key : undefined,
+      query: query.trim() || undefined,
+      source_kind: sourceKind || undefined,
+      authority_level: authorityLevel || undefined,
+      freshness_status: freshnessStatus || undefined,
+      source_status: sourceStatus || undefined,
+    });
+    setSources(response.sources);
+    setSelectedSourceId((current) => {
+      if (current && response.sources.some((source) => source.id === current)) return current;
+      return response.sources[0]?.id || "";
+    });
+  }, [authorityLevel, freshnessStatus, query, sourceKind, sourceStatus, view]);
 
-    if (loadError) {
-      setError(loadError.message);
-    } else {
-      setSources(data ?? []);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function runInitialLoad() {
+      setLoading(true);
+      try {
+        const [topicRows, registry] = await Promise.all([
+          fetchSourceTopics(),
+          fetchSourceRegistry({ smart_view: "unassigned" }),
+        ]);
+        if (cancelled) return;
+        setTopics(topicRows);
+        setSources(registry.sources);
+        setSelectedSourceId(registry.sources[0]?.id || "");
+      } catch (requestError: unknown) {
+        if (!cancelled) setError(getErrorMessage(requestError, "Failed to load source registry."));
+      }
+      if (!cancelled) setLoading(false);
     }
-    setLoading(false);
+
+    void runInitialLoad();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    void loadSources();
-  }, [loadSources]);
+    if (loading) return undefined;
+    let cancelled = false;
 
-  async function addGlobalSource() {
-    if (!docContent.trim()) {
-      setError("Document content is required.");
-      return;
+    async function refreshSources() {
+      try {
+        await loadSources();
+      } catch (requestError: unknown) {
+        if (!cancelled) setError(getErrorMessage(requestError, "Failed to refresh source registry."));
+      }
     }
 
-    setAdding(true);
+    void refreshSources();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadSources, loading]);
+
+  useEffect(() => {
+    if (!selectedSource) {
+      return undefined;
+    }
+    let cancelled = false;
+
+    async function loadUsage() {
+      setUsageLoading(true);
+      try {
+        const response = await fetchSourceUsage(selectedSource.id);
+        if (!cancelled) setUsage(response);
+      } catch (requestError: unknown) {
+        if (!cancelled) setError(getErrorMessage(requestError, "Failed to load source usage."));
+      }
+      if (!cancelled) setUsageLoading(false);
+    }
+
+    void loadUsage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSource]);
+
+  async function addTopic() {
+    if (!topicName.trim()) {
+      setError("Topic name is required.");
+      return;
+    }
     setError("");
     setSuccess("");
-
-    const { error: insertError } = await supabase.from("global_source_documents").insert({
-      title: docTitle.trim() || `${DOC_TYPE_LABELS[docType]} ${sources.length + 1}`,
-      content: docContent.trim(),
-      doc_type: docType,
-    });
-
-    if (insertError) {
-      setError(insertError.message);
-      setAdding(false);
-      return;
+    try {
+      await createSourceTopic({ name: topicName.trim(), topic_type: topicType });
+      setTopicName("");
+      setTopicType("collection");
+      setShowTopicForm(false);
+      await loadTopics();
+      setSuccess("Topic created.");
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError, "Failed to create source topic."));
     }
-
-    setDocTitle("");
-    setDocContent("");
-    setDocType("news");
-    setShowForm(false);
-    setSuccess("Source added to the global repository.");
-    setAdding(false);
-    await loadSources();
   }
 
-  async function deleteGlobalSource(id: string) {
+  async function assignSelectedSource() {
+    if (!selectedSource || !assignTopicId) {
+      setError("Select a source and topic before assigning.");
+      return;
+    }
+    setAssigning(true);
     setError("");
     setSuccess("");
-    const { error: deleteError } = await supabase.from("global_source_documents").delete().eq("id", id);
-
-    if (deleteError) {
-      setError(deleteError.message);
-      return;
+    try {
+      await createSourceTopicAssignment({
+        global_source_id: selectedSource.id,
+        topic_id: assignTopicId,
+        reason: assignReason.trim(),
+        assigned_by: "user",
+      });
+      setAssignReason("");
+      await loadSources();
+      setSuccess("Source assigned to topic.");
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError, "Failed to assign source to topic."));
     }
-
-    setSources((current) => current.filter((doc) => doc.id !== id));
-    setSuccess("Global source deleted.");
+    setAssigning(false);
   }
 
-  const filteredSources = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return sources;
-    return sources.filter((source) =>
-      source.title.toLowerCase().includes(normalized)
-      || source.content.toLowerCase().includes(normalized)
-      || DOC_TYPE_LABELS[source.doc_type].toLowerCase().includes(normalized)
-    );
-  }, [query, sources]);
+  async function removeAssignment(assignmentId: string) {
+    setError("");
+    setSuccess("");
+    try {
+      await removeSourceTopicAssignment(assignmentId);
+      await loadSources();
+      setSuccess("Source removed from topic.");
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError, "Failed to remove topic assignment."));
+    }
+  }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-full">
-        <PSpinner size="medium" />
-      </div>
-    );
+    return <div className="flex items-center justify-center min-h-full"><PSpinner size="medium" /></div>;
   }
 
   return (
     <div className="min-h-full">
       <PageHeader
         title="Global Source Library"
-        subtitle="Manage reusable source material that can be attached to any crisis case."
+        subtitle="Organize reusable source material by topic, maintenance view, and usage context."
         breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Source Library" }]}
         action={(
-          <PButton icon="add" onClick={() => setShowForm((current) => !current)}>
-            Add Global Source
+          <PButton icon="add" onClick={() => setShowTopicForm((current) => !current)}>
+            New Topic
           </PButton>
         )}
       />
 
-      <div className="p-fluid-lg max-w-5xl flex flex-col gap-fluid-md">
+      <div className="p-fluid-lg max-w-7xl flex flex-col gap-fluid-md">
         {error && (
-          <PInlineNotification
-            heading="Error"
-            description={error}
-            state="error"
-            dismissButton
-            onDismiss={() => setError("")}
-          />
+          <PInlineNotification heading="Error" description={error} state="error" dismissButton onDismiss={() => setError("")} />
         )}
         {success && (
-          <PInlineNotification
-            heading="Success"
-            description={success}
-            state="success"
-            dismissButton
-            onDismiss={() => setSuccess("")}
-          />
+          <PInlineNotification heading="Success" description={success} state="success" dismissButton onDismiss={() => setSuccess("")} />
         )}
 
-        <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md">
-          <PText size="small" weight="semi-bold" className="mb-static-xs">Search Library</PText>
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search by title, content, or type..."
-            className="w-full border border-contrast-low rounded bg-canvas px-static-md py-static-sm text-primary placeholder:text-contrast-low focus:outline-none focus:border-primary"
-            style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "15px" }}
-          />
-        </div>
+        {showTopicForm && (
+          <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md grid grid-cols-5 gap-static-sm items-end">
+            <label className="flex flex-col gap-static-xs col-span-2">
+              <PText size="small" weight="semi-bold">Topic Name</PText>
+              <input
+                value={topicName}
+                onChange={(event) => setTopicName(event.target.value)}
+                className="w-full border border-contrast-low rounded bg-canvas px-static-md py-static-sm text-primary focus:outline-none focus:border-primary"
+                style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "15px" }}
+              />
+            </label>
+            <label className="flex flex-col gap-static-xs">
+              <PText size="small" weight="semi-bold">Type</PText>
+              <select
+                value={topicType}
+                onChange={(event) => setTopicType(event.target.value)}
+                className="w-full border border-contrast-low rounded bg-canvas px-static-md py-static-sm text-primary focus:outline-none focus:border-primary"
+                style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "15px" }}
+              >
+                <option value="collection">Collection</option>
+                <option value="crisis">Crisis</option>
+                <option value="product">Product</option>
+                <option value="region">Region</option>
+                <option value="stakeholder">Stakeholder</option>
+              </select>
+            </label>
+            <PButton disabled={!topicName.trim()} onClick={addTopic}>Create Topic</PButton>
+            <PButton variant="secondary" onClick={() => setShowTopicForm(false)}>Cancel</PButton>
+          </div>
+        )}
 
-        {showForm && (
-          <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md flex flex-col gap-fluid-sm">
-            <PHeading size="small">New Global Source</PHeading>
-
+        <div className="grid grid-cols-6 gap-fluid-md items-start">
+          <aside className="col-span-1 bg-surface border border-contrast-low rounded-lg p-static-sm flex flex-col gap-static-md">
             <div>
-              <PText size="small" weight="semi-bold" className="mb-static-xs">Document Type</PText>
-              <div className="flex gap-static-sm flex-wrap">
-                {DOC_TYPES.map((type) => (
+              <PText size="small" weight="semi-bold" className="mb-static-xs">Smart Views</PText>
+              <div className="flex flex-col gap-static-xs">
+                <button
+                  className={`text-left rounded px-static-sm py-static-xs ${viewKey(view) === "all" ? "bg-primary text-[white]" : "hover:bg-canvas"}`}
+                  onClick={() => setView({ type: "all" })}
+                >
+                  All Sources
+                </button>
+                {SMART_VIEWS.map((smartView) => (
                   <button
-                    key={type.value}
-                    onClick={() => setDocType(type.value)}
-                    className={`px-static-md py-static-xs rounded border text-sm transition-colors ${
-                      docType === type.value
-                        ? "border-primary bg-primary text-[white]"
-                        : "border-contrast-low bg-canvas text-contrast-medium hover:border-primary hover:text-primary"
-                    }`}
-                    style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif" }}
+                    key={smartView.key}
+                    className={`text-left rounded px-static-sm py-static-xs ${viewKey(view) === `smart:${smartView.key}` ? "bg-primary text-[white]" : "hover:bg-canvas"}`}
+                    onClick={() => setView({ type: "smart", key: smartView.key })}
                   >
-                    {type.label}
+                    <span className="block text-sm">{smartView.label}</span>
+                    <span className="block text-xs opacity-70">{smartView.desc}</span>
                   </button>
                 ))}
               </div>
             </div>
 
             <div>
-              <PText size="small" weight="semi-bold" className="mb-static-xs">Title (optional)</PText>
-              <input
-                value={docTitle}
-                onChange={(event) => setDocTitle(event.target.value)}
-                placeholder="Document title..."
-                className="w-full border border-contrast-low rounded bg-canvas px-static-md py-static-sm text-primary placeholder:text-contrast-low focus:outline-none focus:border-primary"
-                style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "15px" }}
-              />
+              <PText size="small" weight="semi-bold" className="mb-static-xs">Topics</PText>
+              <div className="flex flex-col gap-static-xs max-h-[420px] overflow-auto pr-static-xs">
+                {topics.map((topic) => (
+                  <button
+                    key={topic.id}
+                    className={`text-left rounded px-static-sm py-static-xs ${viewKey(view) === `topic:${topic.id}` ? "bg-primary text-[white]" : "hover:bg-canvas"}`}
+                    onClick={() => setView({ type: "topic", topicId: topic.id })}
+                  >
+                    <span className="block text-sm">{topic.name}</span>
+                    <span className="block text-xs opacity-70">{topic.topic_type}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </aside>
+
+          <section className="col-span-3 bg-surface border border-contrast-low rounded-lg overflow-hidden">
+            <div className="p-fluid-md border-b border-contrast-low grid grid-cols-5 gap-static-sm">
+              <label className="flex flex-col gap-static-xs col-span-5">
+                <PText size="small" weight="semi-bold">Search Registry</PText>
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search title, content, or source kind..."
+                  className="w-full border border-contrast-low rounded bg-canvas px-static-md py-static-sm text-primary placeholder:text-contrast-low focus:outline-none focus:border-primary"
+                  style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "15px" }}
+                />
+              </label>
+              {[
+                ["Kind", sourceKind, setSourceKind, SOURCE_KINDS],
+                ["Authority", authorityLevel, setAuthorityLevel, AUTHORITY_LEVELS],
+                ["Freshness", freshnessStatus, setFreshnessStatus, FRESHNESS_STATUSES],
+                ["Status", sourceStatus, setSourceStatus, SOURCE_STATUSES],
+              ].map(([label, value, setter, options]) => (
+                <label key={String(label)} className="flex flex-col gap-static-xs">
+                  <PText size="small" weight="semi-bold">{String(label)}</PText>
+                  <select
+                    value={String(value)}
+                    onChange={(event) => (setter as (value: string) => void)(event.target.value)}
+                    className="w-full border border-contrast-low rounded bg-canvas px-static-sm py-static-xs text-primary focus:outline-none focus:border-primary"
+                    style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "14px" }}
+                  >
+                    {(options as string[]).map((option) => (
+                      <option key={option || "any"} value={option}>{option || "Any"}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+              <div className="flex items-end">
+                <PButton variant="secondary" className="w-full" onClick={() => void loadSources()}>
+                  Refresh
+                </PButton>
+              </div>
             </div>
 
-            <div>
-              <PText size="small" weight="semi-bold" className="mb-static-xs">Content *</PText>
-              <textarea
-                value={docContent}
-                onChange={(event) => setDocContent(event.target.value)}
-                placeholder="Paste the full document text here..."
-                rows={6}
-                className="w-full border border-contrast-low rounded bg-canvas px-static-md py-static-sm text-primary placeholder:text-contrast-low focus:outline-none focus:border-primary resize-none"
-                style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "15px" }}
-              />
-            </div>
-
-            <div className="flex gap-static-sm">
-              <PButton loading={adding} disabled={adding || !docContent.trim()} onClick={addGlobalSource}>
-                Save to Library
-              </PButton>
-              <PButton variant="secondary" onClick={() => setShowForm(false)}>
-                Cancel
-              </PButton>
-            </div>
-          </div>
-        )}
-
-        <div className="bg-surface border border-contrast-low rounded-lg overflow-hidden">
-          <div className="px-fluid-md py-static-md border-b border-contrast-low flex items-center justify-between">
-            <PHeading size="small">Repository Documents</PHeading>
-            <PText size="small" className="text-contrast-medium">{filteredSources.length} items</PText>
-          </div>
-
-          {filteredSources.length === 0 ? (
-            <div className="p-fluid-lg flex flex-col items-center gap-static-sm text-center">
-              <PIcon name="document" size="large" color="contrast-medium" />
-              <PText className="text-contrast-medium">
-                {sources.length === 0 ? "No global sources yet." : "No sources match the current search."}
-              </PText>
-            </div>
-          ) : (
-            <div className="divide-y divide-contrast-low">
-              {filteredSources.map((source) => {
-                const typeConfig = DOC_TYPES.find((type) => type.value === source.doc_type)!;
-                return (
-                  <div key={source.id} className="p-fluid-sm flex gap-static-md">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-static-sm mb-static-xs">
-                        <PTag color={typeConfig.color}>{typeConfig.label}</PTag>
-                        <PText size="small" className="text-contrast-low">
-                          {new Date(source.created_at).toLocaleString()}
-                        </PText>
-                      </div>
-                      <PText size="small" weight="semi-bold" className="mb-static-xs">{source.title}</PText>
-                      <PText size="small" className="text-contrast-medium whitespace-pre-line">
-                        {source.content}
-                      </PText>
+            {sources.length === 0 ? (
+              <div className="p-fluid-lg flex flex-col items-center gap-static-sm text-center">
+                <PIcon name="document" size="large" color="contrast-medium" />
+                <PText className="text-contrast-medium">No sources match the current view.</PText>
+              </div>
+            ) : (
+              <div className="divide-y divide-contrast-low">
+                {sources.map((source) => (
+                  <button
+                    key={source.id}
+                    className={`w-full text-left p-fluid-sm hover:bg-canvas ${selectedSource?.id === source.id ? "bg-canvas" : ""}`}
+                    onClick={() => setSelectedSourceId(source.id)}
+                  >
+                    <div className="flex items-center gap-static-xs flex-wrap mb-static-xs">
+                      <PTag color={tagColor(source.source_kind)}>{source.source_kind}</PTag>
+                      <PTag color={tagColor(source.authority_level)}>{source.authority_level}</PTag>
+                      <PTag color={tagColor(source.freshness_status)}>{source.freshness_status}</PTag>
+                      {source.duplicate_candidate && <PTag color="notification-warning-soft">duplicate</PTag>}
+                      {source.usage_count > 0 && <PTag color="notification-info-soft">{source.usage_count} uses</PTag>}
                     </div>
-                    <PButtonPure icon="delete" className="text-error shrink-0" onClick={() => void deleteGlobalSource(source.id)} />
+                    <PText size="small" weight="semi-bold" className="mb-static-xs">{source.title}</PText>
+                    <PText size="small" className="text-contrast-medium line-clamp-3">{source.content}</PText>
+                    <div className="flex gap-static-xs flex-wrap mt-static-xs">
+                      {source.topic_assignments.slice(0, 3).map((assignment) => (
+                        <PTag key={assignment.assignment_id} color="background-frosted">{assignment.topic_name}</PTag>
+                      ))}
+                      {source.topic_assignments.length === 0 && <PTag color="notification-warning-soft">Unassigned</PTag>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <aside className="col-span-2 bg-surface border border-contrast-low rounded-lg p-fluid-md sticky top-fluid-md">
+            {!selectedSource ? (
+              <div className="flex flex-col items-center gap-static-sm text-center p-fluid-md">
+                <PIcon name="document" size="large" color="contrast-medium" />
+                <PText className="text-contrast-medium">Select a source to inspect details.</PText>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-fluid-sm">
+                <div>
+                  <PHeading size="small">{selectedSource.title}</PHeading>
+                  <PText size="small" className="text-contrast-medium mt-static-xs line-clamp-5">{selectedSource.content}</PText>
+                </div>
+
+                <div className="grid grid-cols-3 gap-static-xs">
+                  <div className="bg-canvas rounded p-static-xs text-center">
+                    <PText size="small" weight="semi-bold">{selectedSource.usage_count}</PText>
+                    <PText size="x-small" className="text-contrast-medium">Uses</PText>
                   </div>
-                );
-              })}
-            </div>
-          )}
+                  <div className="bg-canvas rounded p-static-xs text-center">
+                    <PText size="small" weight="semi-bold">{selectedSource.topic_assignments.length}</PText>
+                    <PText size="x-small" className="text-contrast-medium">Topics</PText>
+                  </div>
+                  <div className="bg-canvas rounded p-static-xs text-center">
+                    <PText size="small" weight="semi-bold">{selectedSource.duplicate_candidate ? "Yes" : "No"}</PText>
+                    <PText size="x-small" className="text-contrast-medium">Duplicate</PText>
+                  </div>
+                </div>
+
+                <div>
+                  <PText size="small" weight="semi-bold" className="mb-static-xs">Assign to Topic</PText>
+                  <div className="flex gap-static-xs">
+                    <select
+                      value={assignTopicId}
+                      onChange={(event) => setAssignTopicId(event.target.value)}
+                      className="flex-1 border border-contrast-low rounded bg-canvas px-static-sm py-static-xs text-primary focus:outline-none focus:border-primary"
+                      style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "14px" }}
+                    >
+                      <option value="">Select topic</option>
+                      {topics.map((topic) => (
+                        <option key={topic.id} value={topic.id}>{topic.name}</option>
+                      ))}
+                    </select>
+                    <PButton loading={assigning} disabled={assigning || !assignTopicId} onClick={assignSelectedSource}>
+                      Assign
+                    </PButton>
+                  </div>
+                  <input
+                    value={assignReason}
+                    onChange={(event) => setAssignReason(event.target.value)}
+                    placeholder="Reason..."
+                    className="w-full border border-contrast-low rounded bg-canvas px-static-sm py-static-xs text-primary placeholder:text-contrast-low focus:outline-none focus:border-primary mt-static-xs"
+                    style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "14px" }}
+                  />
+                </div>
+
+                <div>
+                  <PText size="small" weight="semi-bold" className="mb-static-xs">Topic Assignments</PText>
+                  <div className="flex flex-col gap-static-xs">
+                    {selectedSource.topic_assignments.length === 0 ? (
+                      <PText size="small" className="text-contrast-medium">No active topic assignments.</PText>
+                    ) : selectedSource.topic_assignments.map((assignment) => (
+                      <div key={assignment.assignment_id} className="bg-canvas rounded p-static-xs flex items-start justify-between gap-static-xs">
+                        <div>
+                          <PText size="small" weight="semi-bold">{assignment.topic_name}</PText>
+                          <PText size="x-small" className="text-contrast-medium">{assignment.reason || assignment.assigned_by}</PText>
+                        </div>
+                        <PButtonPure icon="delete" onClick={() => void removeAssignment(assignment.assignment_id)} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <PText size="small" weight="semi-bold" className="mb-static-xs">Usage</PText>
+                  {usageLoading ? (
+                    <PSpinner size="small" />
+                  ) : !usage || usage.cases.length === 0 ? (
+                    <PText size="small" className="text-contrast-medium">Not used in any case yet.</PText>
+                  ) : (
+                    <div className="flex flex-col gap-static-xs">
+                      {usage.cases.slice(0, 5).map((item) => (
+                        <div key={item.source_document_id} className="bg-canvas rounded p-static-xs">
+                          <PText size="small" weight="semi-bold">{item.case_title}</PText>
+                          <PText size="x-small" className="text-contrast-medium">{item.source_origin}</PText>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </aside>
         </div>
       </div>
     </div>

@@ -20,6 +20,7 @@ const globalNav: NavItem[] = [
 function CaseNav({ caseId }: { caseId: string }) {
   const items: NavItem[] = [
     { label: "Documents", icon: "document", href: `/cases/${caseId}/documents` },
+    { label: "Discovery", icon: "search", href: `/cases/${caseId}/source-discovery` },
     { label: "Grounding", icon: "brain", href: `/cases/${caseId}/grounding` },
     { label: "Simulation", icon: "chart", href: `/cases/${caseId}/simulation` },
     { label: "Comparison", icon: "compare", href: `/cases/${caseId}/comparison` },
@@ -33,7 +34,12 @@ function CaseNav({ caseId }: { caseId: string }) {
       </PText>
       <div className="flex flex-col gap-static-xs mt-static-xs">
         {items.map((item) => {
-          const active = location.pathname === item.href;
+          const active = location.pathname === item.href || (
+            item.href.endsWith("/source-discovery") && (
+              location.pathname.includes("/source-discovery")
+              || location.pathname.includes("/evidence-packs")
+            )
+          );
           return (
             <Link
               key={item.href}

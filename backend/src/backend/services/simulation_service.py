@@ -7,6 +7,7 @@ from backend.domain.simulation_records import RunType, SimulationStatus
 from backend.repository.job_repository import JobRepository
 from backend.repository.simulation_repository import SIMULATION_JOB_TYPE, SimulationRepository
 from backend.services.extraction_contracts import GRAPH_EXTRACTION_JOB_TYPE
+from backend.services.source_discovery_contracts import SOURCE_DISCOVERY_JOB_TYPE
 from backend.services.llm_client import LlmJsonClient
 from backend.services.simulation_contracts import (
     JobStatusResponse,
@@ -103,6 +104,11 @@ class SimulationService:
             status_path = f"/api/simulation-runs/{run.id}"
         elif job.job_type == GRAPH_EXTRACTION_JOB_TYPE:
             status_path = f"/api/graph-extractions/{job.id}"
+        elif job.job_type == SOURCE_DISCOVERY_JOB_TYPE:
+            status_path = None
+            source_discovery_job_id = dict(job.payload or {}).get("source_discovery_job_id")
+            if source_discovery_job_id:
+                status_path = f"/api/source-discovery/jobs/{source_discovery_job_id}"
         return JobStatusResponse(
             id=str(job.id),
             job_id=str(job.id),

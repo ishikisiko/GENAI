@@ -14,7 +14,7 @@ class BackendConfig(BaseSettings):
         env_prefix="",
         extra="ignore",
         validate_default=True,
-        populate_by_name=True,
+        populate_by_name=False,
     )
 
     app_name: str = Field(default="python-backend-foundation", alias="APP_NAME")
@@ -42,6 +42,35 @@ class BackendConfig(BaseSettings):
     llm_request_timeout_ms: int = Field(default=120000, alias="LLM_REQUEST_TIMEOUT_MS")
     llm_max_tokens: int = Field(default=4096, alias="LLM_MAX_TOKENS")
     simulation_stale_timeout_seconds: int = Field(default=1200, alias="SIMULATION_STALE_RUN_TIMEOUT_SECONDS")
+    source_discovery_search_provider: Literal["mock", "brave"] = Field(
+        default="mock",
+        alias="SOURCE_DISCOVERY_SEARCH_PROVIDER",
+    )
+    brave_search_api_key: str | None = Field(default=None, alias="BRAVE_SEARCH_API_KEY")
+    brave_search_endpoint: str = Field(
+        default="https://api.search.brave.com/res/v1/web/search",
+        alias="BRAVE_SEARCH_ENDPOINT",
+    )
+    brave_search_count: int = Field(default=10, ge=1, le=20, alias="BRAVE_SEARCH_COUNT")
+    brave_search_country: str = Field(default="us", alias="BRAVE_SEARCH_COUNTRY")
+    brave_search_lang: str = Field(default="en", alias="BRAVE_SEARCH_LANG")
+    brave_search_rate_limit_seconds: float = Field(
+        default=1.0,
+        ge=0.0,
+        alias="BRAVE_SEARCH_RATE_LIMIT_SECONDS",
+    )
+
+    def __init__(self, **values: object) -> None:
+        alias_by_name = {
+            name: field.alias
+            for name, field in type(self).model_fields.items()
+            if isinstance(field.alias, str)
+        }
+        normalized_values = {
+            alias_by_name.get(key, key) if not key.startswith("_") else key: value
+            for key, value in values.items()
+        }
+        super().__init__(**normalized_values)
 
     def allowed_cors_origins(self) -> list[str]:
         raw = [item.strip() for item in self.cors_origins.split(",")]
@@ -53,5 +82,6 @@ def load_config(overrides: dict[str, object] | None = None) -> BackendConfig:
     """Load and validate backend config from environment with optional overrides."""
 
     if overrides is None:
-        overrides = {}
+        return BackendConfig()
+    overrides = {"_env_file": None, **overrides}
     return BackendConfig(**overrides)

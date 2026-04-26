@@ -56,17 +56,35 @@ npm run supabase:status
   - `VITE_BACKEND_API_BASE=http://127.0.0.1:8000`
   - `VITE_BACKEND_URL=http://127.0.0.1:8000` (`VITE_BACKEND_API_BASE` is preferred; `VITE_BACKEND_URL` is kept as a compatibility alias)
 - `supabase/functions/.env`
-  - `SUPABASE_URL=http://127.0.0.1:54321`
-  - `SUPABASE_SERVICE_ROLE_KEY=<local service_role key>`
   - `LLM_API_KEY=<your LLM key>`
   - `LLM_MODEL=<your model, default gpt-4o-mini>`
   - `LLM_BASE_URL=<OpenAI-compatible base URL, default https://api.openai.com/v1>`
   - `LLM_PROVIDER=<openai|anthropic>`
 
-The Supabase docs note that `supabase/functions/.env` is auto-loaded for local function serving, and you can also pass a custom file with `--env-file`:
+Supabase reserves environment names that start with `SUPABASE_` for Edge
+Functions, so do not put `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` in
+`supabase/functions/.env`; the local runtime injects those platform values.
+The Supabase docs note that `supabase/functions/.env` is auto-loaded for local
+function serving, and you can also pass a custom file with `--env-file`:
 https://supabase.com/docs/guides/functions/secrets
 
 ## Daily local workflow
+
+Start the complete local stack with one command:
+
+```bash
+npm run start:all
+```
+
+Stop the complete local stack with one command:
+
+```bash
+npm run stop:all
+```
+
+The one-command workflow starts/stops Supabase, the Python API, the Python
+worker, and the local Vite frontend. Logs and PID files are written under
+`logs/dev-services/`.
 
 Start the local Supabase stack:
 

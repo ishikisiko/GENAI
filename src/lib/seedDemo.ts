@@ -4,6 +4,9 @@ import {
   DEMO_CASE_TITLE,
   demoCase,
   demoGlobalDocs,
+  demoSourceTopics,
+  demoCaseSourceTopics,
+  demoSourceTopicAssignments,
   demoDocs,
   demoEntities,
   demoRelations,
@@ -32,6 +35,15 @@ export async function seedDemo(): Promise<string> {
 
   const { error: globalDocsErr } = await supabase.from("global_source_documents").insert(demoGlobalDocs);
   if (globalDocsErr) throw new Error(`Failed to insert global documents: ${globalDocsErr.message}`);
+
+  const { error: sourceTopicsErr } = await supabase.from("source_topics").insert(demoSourceTopics);
+  if (sourceTopicsErr) throw new Error(`Failed to insert source topics: ${sourceTopicsErr.message}`);
+
+  const { error: caseTopicsErr } = await supabase.from("case_source_topics").insert(demoCaseSourceTopics);
+  if (caseTopicsErr) throw new Error(`Failed to insert case source topics: ${caseTopicsErr.message}`);
+
+  const { error: assignmentsErr } = await supabase.from("source_topic_assignments").insert(demoSourceTopicAssignments);
+  if (assignmentsErr) throw new Error(`Failed to insert source topic assignments: ${assignmentsErr.message}`);
 
   const { error: docsErr } = await supabase.from("source_documents").insert(demoDocs);
   if (docsErr) throw new Error(`Failed to insert documents: ${docsErr.message}`);

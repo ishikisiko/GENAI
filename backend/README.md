@@ -42,6 +42,7 @@ Graph extraction rollout notes live in [docs/graph-extraction-rollout.md](docs/g
 - Realtime is optional and not required for core API/worker operation.
 - Async submissions now return both the canonical operator status path (`job_status_path`) and the product-facing status path (`status_path`).
 - `APP_PRODUCT_AUTH_MODE=public` preserves the current public product flow. Switch to `require_bearer` when rollout requires product endpoints to reject missing bearer headers.
+- Source discovery defaults to deterministic mock search. Set `SOURCE_DISCOVERY_SEARCH_PROVIDER=brave` and `BRAVE_SEARCH_API_KEY` in `backend/.env` to use Brave Search; keep `BRAVE_SEARCH_RATE_LIMIT_SECONDS=1.0` for one request per second subscriptions.
 
 ## Migration workflow
 

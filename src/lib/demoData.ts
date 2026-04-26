@@ -2,6 +2,13 @@ const CASE_ID = "00000000-0000-0000-0000-000000000001";
 const GLOBAL_DOC_NEWS_ID = "10000000-0000-0000-0000-000000000011";
 const GLOBAL_DOC_COMPLAINT_ID = "10000000-0000-0000-0000-000000000012";
 const GLOBAL_DOC_STATEMENT_ID = "10000000-0000-0000-0000-000000000013";
+const GLOBAL_DOC_DUPLICATE_ID = "10000000-0000-0000-0000-000000000014";
+const TOPIC_FOOD_SAFETY_ID = "20000000-0000-0000-0000-000000000001";
+const TOPIC_SALMONELLA_ID = "20000000-0000-0000-0000-000000000002";
+const TOPIC_REGULATORY_ID = "20000000-0000-0000-0000-000000000003";
+const ASSIGN_NEWS_ID = "21000000-0000-0000-0000-000000000011";
+const ASSIGN_COMPLAINT_ID = "21000000-0000-0000-0000-000000000012";
+const ASSIGN_STATEMENT_ID = "21000000-0000-0000-0000-000000000013";
 const DOC_NEWS_ID = "00000000-0000-0000-0000-000000000011";
 const DOC_COMPLAINT_ID = "00000000-0000-0000-0000-000000000012";
 const DOC_STATEMENT_ID = "00000000-0000-0000-0000-000000000013";
@@ -39,6 +46,13 @@ export const demoGlobalDocs = [
   {
     id: GLOBAL_DOC_NEWS_ID,
     title: "Breaking: NutriPlus Protein Bars Linked to Salmonella Outbreak",
+    canonical_url: "https://demo.sources/nutriplus/salmonella-outbreak",
+    content_hash: "demo-salmonella-outbreak-news",
+    source_kind: "news",
+    authority_level: "medium",
+    freshness_status: "current",
+    source_status: "active",
+    source_metadata: { provider: "demo", usage_note: "Seeded news context" },
     content:
       "Health officials confirmed today that NutriPlus ProMax protein bars are linked to a Salmonella outbreak affecting 47 people across 12 states. The FDA issued a mandatory recall of all ProMax SKUs with best-by dates between March and September 2024. Three patients remain hospitalized in critical condition. NutriPlus has not yet issued a public statement. The recall covers approximately 2.3 million units distributed through major retailers including Walmart, Target, and Amazon.",
     doc_type: "news",
@@ -46,6 +60,13 @@ export const demoGlobalDocs = [
   {
     id: GLOBAL_DOC_COMPLAINT_ID,
     title: "Consumer Complaint Batch — ProMax Salmonella Symptoms",
+    canonical_url: null,
+    content_hash: "demo-promax-complaints",
+    source_kind: "complaint",
+    authority_level: "medium",
+    freshness_status: "current",
+    source_status: "active",
+    source_metadata: { provider: "demo", usage_note: "Aggregated complaint signal" },
     content:
       "Aggregated consumer complaints (n=312): Symptoms reported include severe nausea, vomiting, diarrhea, and fever within 12–72 hours of consuming NutriPlus ProMax bars. Multiple complainants note NutriPlus customer service was unreachable for 48+ hours after the story broke. Several complainants report medical bills exceeding $3,000 and request reimbursement. A class action lawsuit is being organized by attorney groups in California and Texas. Consumer trust scores on product review platforms have dropped from 4.2/5 to 1.1/5 within 48 hours.",
     doc_type: "complaint",
@@ -53,9 +74,107 @@ export const demoGlobalDocs = [
   {
     id: GLOBAL_DOC_STATEMENT_ID,
     title: "NutriPlus Official Statement — Initial Response",
+    canonical_url: "https://demo.sources/nutriplus/official-initial-response",
+    content_hash: "demo-nutriplus-official-response",
+    source_kind: "official",
+    authority_level: "high",
+    freshness_status: "current",
+    source_status: "active",
+    source_metadata: { provider: "demo", usage_note: "Official company response" },
     content:
       "NutriPlus Inc. is aware of the FDA's inquiry regarding our ProMax protein bar product line. We take food safety extremely seriously and are cooperating fully with regulatory authorities. As a precautionary measure, we have voluntarily initiated a recall of ProMax products manufactured between January–August 2024. We are conducting a thorough internal investigation with third-party laboratory partners. Consumer health and safety is our highest priority. We will provide updates as the investigation progresses. Affected consumers may contact our dedicated recall hotline.",
     doc_type: "statement",
+  },
+  {
+    id: GLOBAL_DOC_DUPLICATE_ID,
+    title: "Wire Copy: NutriPlus Salmonella Outbreak",
+    canonical_url: "https://demo.sources/wire/nutriplus-salmonella-copy",
+    content_hash: "demo-salmonella-outbreak-news",
+    source_kind: "news",
+    authority_level: "low",
+    freshness_status: "current",
+    source_status: "active",
+    source_metadata: { provider: "demo", usage_note: "Intentional duplicate candidate" },
+    content:
+      "Health officials confirmed today that NutriPlus ProMax protein bars are linked to a Salmonella outbreak affecting 47 people across 12 states. The FDA issued a mandatory recall of all ProMax SKUs with best-by dates between March and September 2024.",
+    doc_type: "news",
+  },
+];
+
+export const demoSourceTopics = [
+  {
+    id: TOPIC_FOOD_SAFETY_ID,
+    name: "Food Safety Crises",
+    description: "Reusable food contamination and public health source material.",
+    parent_topic_id: null,
+    topic_type: "crisis",
+    status: "active",
+  },
+  {
+    id: TOPIC_SALMONELLA_ID,
+    name: "NutriPlus Salmonella Outbreak",
+    description: "Sources directly relevant to the NutriPlus ProMax Salmonella crisis.",
+    parent_topic_id: TOPIC_FOOD_SAFETY_ID,
+    topic_type: "crisis",
+    status: "active",
+  },
+  {
+    id: TOPIC_REGULATORY_ID,
+    name: "Regulatory Response",
+    description: "Official statements, regulator updates, and recall process sources.",
+    parent_topic_id: TOPIC_FOOD_SAFETY_ID,
+    topic_type: "stakeholder",
+    status: "active",
+  },
+];
+
+export const demoCaseSourceTopics = [
+  {
+    id: "22000000-0000-0000-0000-000000000001",
+    case_id: CASE_ID,
+    topic_id: TOPIC_SALMONELLA_ID,
+    relation_type: "primary",
+    reason: "Demo crisis topic seeded from the case narrative.",
+  },
+  {
+    id: "22000000-0000-0000-0000-000000000002",
+    case_id: CASE_ID,
+    topic_id: TOPIC_REGULATORY_ID,
+    relation_type: "related",
+    reason: "Regulatory sources are central to recall grounding.",
+  },
+];
+
+export const demoSourceTopicAssignments = [
+  {
+    id: ASSIGN_NEWS_ID,
+    global_source_id: GLOBAL_DOC_NEWS_ID,
+    topic_id: TOPIC_SALMONELLA_ID,
+    relevance_score: 0.95,
+    reason: "Primary news account for the outbreak timeline.",
+    assigned_by: "seed",
+    status: "active",
+    assignment_metadata: { demo: true },
+  },
+  {
+    id: ASSIGN_COMPLAINT_ID,
+    global_source_id: GLOBAL_DOC_COMPLAINT_ID,
+    topic_id: TOPIC_SALMONELLA_ID,
+    relevance_score: 0.86,
+    reason: "Consumer impact and lawsuit signal for the crisis topic.",
+    assigned_by: "seed",
+    status: "active",
+    assignment_metadata: { demo: true },
+  },
+  {
+    id: ASSIGN_STATEMENT_ID,
+    global_source_id: GLOBAL_DOC_STATEMENT_ID,
+    topic_id: TOPIC_REGULATORY_ID,
+    relevance_score: 0.78,
+    reason: "Official company response linked to the regulatory response topic.",
+    assigned_by: "seed",
+    status: "active",
+    assignment_metadata: { demo: true },
   },
 ];
 
@@ -64,31 +183,40 @@ export const demoDocs = [
     id: DOC_NEWS_ID,
     case_id: CASE_ID,
     global_source_id: GLOBAL_DOC_NEWS_ID,
+    source_topic_id: TOPIC_SALMONELLA_ID,
+    source_topic_assignment_id: ASSIGN_NEWS_ID,
     source_origin: "case_upload",
     title: "Breaking: NutriPlus Protein Bars Linked to Salmonella Outbreak",
     content:
       "Health officials confirmed today that NutriPlus ProMax protein bars are linked to a Salmonella outbreak affecting 47 people across 12 states. The FDA issued a mandatory recall of all ProMax SKUs with best-by dates between March and September 2024. Three patients remain hospitalized in critical condition. NutriPlus has not yet issued a public statement. The recall covers approximately 2.3 million units distributed through major retailers including Walmart, Target, and Amazon.",
     doc_type: "news",
+    source_metadata: { selected_topic_id: TOPIC_SALMONELLA_ID, selected_assignment_id: ASSIGN_NEWS_ID },
   },
   {
     id: DOC_COMPLAINT_ID,
     case_id: CASE_ID,
     global_source_id: GLOBAL_DOC_COMPLAINT_ID,
+    source_topic_id: TOPIC_SALMONELLA_ID,
+    source_topic_assignment_id: ASSIGN_COMPLAINT_ID,
     source_origin: "case_upload",
     title: "Consumer Complaint Batch — ProMax Salmonella Symptoms",
     content:
       "Aggregated consumer complaints (n=312): Symptoms reported include severe nausea, vomiting, diarrhea, and fever within 12–72 hours of consuming NutriPlus ProMax bars. Multiple complainants note NutriPlus customer service was unreachable for 48+ hours after the story broke. Several complainants report medical bills exceeding $3,000 and request reimbursement. A class action lawsuit is being organized by attorney groups in California and Texas. Consumer trust scores on product review platforms have dropped from 4.2/5 to 1.1/5 within 48 hours.",
     doc_type: "complaint",
+    source_metadata: { selected_topic_id: TOPIC_SALMONELLA_ID, selected_assignment_id: ASSIGN_COMPLAINT_ID },
   },
   {
     id: DOC_STATEMENT_ID,
     case_id: CASE_ID,
     global_source_id: GLOBAL_DOC_STATEMENT_ID,
+    source_topic_id: TOPIC_REGULATORY_ID,
+    source_topic_assignment_id: ASSIGN_STATEMENT_ID,
     source_origin: "case_upload",
     title: "NutriPlus Official Statement — Initial Response",
     content:
       "NutriPlus Inc. is aware of the FDA's inquiry regarding our ProMax protein bar product line. We take food safety extremely seriously and are cooperating fully with regulatory authorities. As a precautionary measure, we have voluntarily initiated a recall of ProMax products manufactured between January–August 2024. We are conducting a thorough internal investigation with third-party laboratory partners. Consumer health and safety is our highest priority. We will provide updates as the investigation progresses. Affected consumers may contact our dedicated recall hotline.",
     doc_type: "statement",
+    source_metadata: { selected_topic_id: TOPIC_REGULATORY_ID, selected_assignment_id: ASSIGN_STATEMENT_ID },
   },
 ];
 

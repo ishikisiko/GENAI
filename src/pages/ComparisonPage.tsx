@@ -133,10 +133,8 @@ export default function ComparisonPage() {
   const [activeMetric, setActiveMetric] = useState<MetricKey>("sentiment_score");
   const [expandedRound, setExpandedRound] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const fetchComparisonData = useCallback(async () => {
     const { data: c } = await supabase.from("crisis_cases").select("*").eq("id", caseId!).maybeSingle();
-    setCrisisCase(c);
 
     const { data: runs } = await supabase
       .from("simulation_runs")
@@ -157,14 +155,27 @@ export default function ComparisonPage() {
         rounds: rounds ?? [],
       });
     }
-    setAllRuns(runDataArray);
-    setLoading(false);
+    return { crisisCase: c, runDataArray };
   }, [caseId]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (caseId) void load();
-  }, [caseId, load]);
+    if (!caseId) return undefined;
+    let cancelled = false;
+
+    async function runInitialLoad() {
+      const { crisisCase, runDataArray } = await fetchComparisonData();
+      if (cancelled) return;
+      setCrisisCase(crisisCase);
+      setAllRuns(runDataArray);
+      setLoading(false);
+    }
+
+    void runInitialLoad();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [caseId, fetchComparisonData]);
 
   const metricTabs: { key: MetricKey; label: string; icon: IconName; higherIsBetter: boolean }[] = [
     { key: "sentiment_score", label: "Sentiment", icon: "heart", higherIsBetter: true },

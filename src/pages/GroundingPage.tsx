@@ -44,30 +44,86 @@ export default function GroundingPage() {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [relations, setRelations] = useState<Relation[]>([]);
   const [claims, setClaims] = useState<Claim[]>([]);
+  const [acceptedCandidateCount, setAcceptedCandidateCount] = useState(0);
+  const [latestAcceptedDiscoveryJobId, setLatestAcceptedDiscoveryJobId] = useState<string | null>(null);
+  const [evidencePackCount, setEvidencePackCount] = useState(0);
+  const [latestEvidencePackId, setLatestEvidencePackId] = useState<string | null>(null);
+  const [sourceDocumentCount, setSourceDocumentCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"entities" | "relations" | "claims">("entities");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [{ data: c }, { data: ents }, { data: rels }, { data: cls }] = await Promise.all([
+  const fetchGroundingData = useCallback(async () => {
+    const [
+      { data: c },
+      { data: ents },
+      { data: rels },
+      { data: cls },
+      { data: accepted, count: acceptedCount },
+      { data: packs, count: packCount },
+      { count: documentCount },
+    ] = await Promise.all([
       supabase.from("crisis_cases").select("*").eq("id", caseId!).maybeSingle(),
       supabase.from("entities").select("*").eq("case_id", caseId!).order("entity_type"),
       supabase.from("relations").select("*").eq("case_id", caseId!),
       supabase.from("claims").select("*").eq("case_id", caseId!).order("credibility"),
+      supabase
+        .from("source_candidates")
+        .select("discovery_job_id", { count: "exact" })
+        .eq("case_id", caseId!)
+        .eq("review_status", "accepted")
+        .order("updated_at", { ascending: false })
+        .limit(1),
+      supabase
+        .from("evidence_packs")
+        .select("id", { count: "exact" })
+        .eq("case_id", caseId!)
+        .order("created_at", { ascending: false })
+        .limit(1),
+      supabase
+        .from("source_documents")
+        .select("id", { count: "exact", head: true })
+        .eq("case_id", caseId!),
     ]);
-    setCrisisCase(c);
-    setEntities(ents ?? []);
-    setRelations(rels ?? []);
-    setClaims(cls ?? []);
-    setLoading(false);
+    return {
+      crisisCase: c,
+      entities: ents ?? [],
+      relations: rels ?? [],
+      claims: cls ?? [],
+      acceptedCandidateCount: acceptedCount ?? 0,
+      latestAcceptedDiscoveryJobId: accepted?.[0]?.discovery_job_id ?? null,
+      evidencePackCount: packCount ?? 0,
+      latestEvidencePackId: packs?.[0]?.id ?? null,
+      sourceDocumentCount: documentCount ?? 0,
+    };
   }, [caseId]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (caseId) void load();
-  }, [caseId, load]);
+    if (!caseId) return undefined;
+    let cancelled = false;
+
+    async function runInitialLoad() {
+      const data = await fetchGroundingData();
+      if (cancelled) return;
+      setCrisisCase(data.crisisCase);
+      setEntities(data.entities);
+      setRelations(data.relations);
+      setClaims(data.claims);
+      setAcceptedCandidateCount(data.acceptedCandidateCount);
+      setLatestAcceptedDiscoveryJobId(data.latestAcceptedDiscoveryJobId);
+      setEvidencePackCount(data.evidencePackCount);
+      setLatestEvidencePackId(data.latestEvidencePackId);
+      setSourceDocumentCount(data.sourceDocumentCount);
+      setLoading(false);
+    }
+
+    void runInitialLoad();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [caseId, fetchGroundingData]);
 
   async function handleGenerateAgents() {
     setGenerating(true);
@@ -104,6 +160,46 @@ export default function GroundingPage() {
   );
 
   const isEmpty = entities.length === 0 && claims.length === 0;
+  const emptyState = (() => {
+    if (acceptedCandidateCount > 0 && evidencePackCount === 0) {
+      return {
+        message: `${acceptedCandidateCount} accepted source${acceptedCandidateCount > 1 ? "s" : ""} waiting for an Evidence Pack.`,
+        detail: "Accepted sources are still review decisions. Create an Evidence Pack before they become grounding material.",
+        button: "Open Candidate Review",
+        onClick: () => navigate(
+          latestAcceptedDiscoveryJobId
+            ? `/cases/${caseId}/source-discovery/${latestAcceptedDiscoveryJobId}/review`
+            : `/cases/${caseId}/source-discovery`
+        ),
+      };
+    }
+    if (evidencePackCount > 0 && sourceDocumentCount === 0) {
+      return {
+        message: "Evidence Pack created, but it has not been grounded into Documents yet.",
+        detail: "Open the Evidence Pack and start grounding to convert reviewed sources into case documents.",
+        button: "Open Evidence Pack",
+        onClick: () => navigate(
+          latestEvidencePackId
+            ? `/cases/${caseId}/evidence-packs/${latestEvidencePackId}`
+            : `/cases/${caseId}/documents`
+        ),
+      };
+    }
+    if (sourceDocumentCount > 0) {
+      return {
+        message: `${sourceDocumentCount} document${sourceDocumentCount > 1 ? "s" : ""} ready for graph extraction.`,
+        detail: "Extract the knowledge graph from Documents before reviewing grounding results here.",
+        button: "Open Documents",
+        onClick: () => navigate(`/cases/${caseId}/documents`),
+      };
+    }
+    return {
+      message: "No grounding data yet.",
+      detail: "Add source documents or discover sources before extracting the knowledge graph.",
+      button: "Open Documents",
+      onClick: () => navigate(`/cases/${caseId}/documents`),
+    };
+  })();
 
   return (
     <div className="min-h-full">
@@ -122,9 +218,10 @@ export default function GroundingPage() {
         {isEmpty ? (
           <div className="bg-surface border border-contrast-low rounded-lg p-fluid-xl flex flex-col items-center gap-static-md text-center">
             <PIcon name="brain" size="large" color="contrast-medium" />
-            <PText className="text-contrast-medium">No grounding data yet. Go back and extract the knowledge graph first.</PText>
-            <PButton variant="secondary" icon="arrow-left" onClick={() => navigate(`/cases/${caseId}/documents`)}>
-              Back to Documents
+            <PText className="text-contrast-medium">{emptyState.message}</PText>
+            <PText size="small" className="text-contrast-medium max-w-xl">{emptyState.detail}</PText>
+            <PButton variant="secondary" icon="arrow-left" onClick={emptyState.onClick}>
+              {emptyState.button}
             </PButton>
           </div>
         ) : (

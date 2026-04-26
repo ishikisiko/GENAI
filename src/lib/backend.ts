@@ -2,11 +2,24 @@ import { BACKEND_API_BASE, supabase } from "./supabase";
 import { getErrorMessage } from "./errors";
 import type {
   AgentGenerationResponse,
+  CandidateReviewStatus,
+  CaseSourceSelectionResponse,
+  EvidencePack,
+  EvidencePackCreationResponse,
+  EvidencePackGroundingResponse,
   GraphExtractionStatusResponse,
   GraphExtractionSubmissionResponse,
   JobStatusResponse,
   SimulationRunStatusResponse,
   SimulationSubmissionResponse,
+  SourceCandidate,
+  SourceCandidateLibrarySaveResponse,
+  SourceDiscoveryJobResponse,
+  SourceDocumentSnapshotResponse,
+  SourceRegistryListResponse,
+  SourceTopic,
+  SourceTopicAssignment,
+  SourceUsageResponse,
   StrategyType,
 } from "./types";
 
@@ -187,4 +200,185 @@ export async function fetchJobStatus(pathOrJobId: string): Promise<JobStatusResp
 
 export async function fetchSimulationRunStatus(pathOrRunId: string): Promise<SimulationRunStatusResponse> {
   return requestBackend<SimulationRunStatusResponse>(normalizeStatusPath(pathOrRunId, "/api/simulation-runs"));
+}
+
+export interface CreateSourceDiscoveryJobRequest {
+  case_id: string;
+  topic: string;
+  description: string;
+  region: string;
+  language: string;
+  time_range: string;
+  source_types: string[];
+  max_sources: number;
+}
+
+export async function createSourceDiscoveryJob(
+  payload: CreateSourceDiscoveryJobRequest,
+): Promise<SourceDiscoveryJobResponse> {
+  return requestBackend<SourceDiscoveryJobResponse>("/api/source-discovery/jobs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchSourceDiscoveryJob(jobId: string): Promise<SourceDiscoveryJobResponse> {
+  return requestBackend<SourceDiscoveryJobResponse>(normalizeStatusPath(jobId, "/api/source-discovery/jobs"));
+}
+
+export interface FetchSourceCandidatesParams {
+  case_id?: string;
+  discovery_job_id?: string;
+  review_status?: CandidateReviewStatus;
+}
+
+export async function fetchSourceCandidates(params: FetchSourceCandidatesParams): Promise<SourceCandidate[]> {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) query.set(key, value);
+  });
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await requestBackend<{ candidates: SourceCandidate[] }>(`/api/source-candidates${suffix}`);
+  return response.candidates;
+}
+
+export async function updateSourceCandidateReview(
+  sourceId: string,
+  reviewStatus: CandidateReviewStatus,
+): Promise<SourceCandidate> {
+  return requestBackend<SourceCandidate>(`/api/source-candidates/${sourceId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ review_status: reviewStatus }),
+  });
+}
+
+export async function saveSourceCandidateToLibrary(
+  sourceId: string,
+  payload: { topic_id?: string | null; reason?: string; assigned_by?: string },
+): Promise<SourceCandidateLibrarySaveResponse> {
+  return requestBackend<SourceCandidateLibrarySaveResponse>(`/api/source-candidates/${sourceId}/save-to-library`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface CreateEvidencePackRequest {
+  case_id: string;
+  discovery_job_id?: string;
+  candidate_ids: string[];
+  title?: string;
+}
+
+export async function createEvidencePack(payload: CreateEvidencePackRequest): Promise<EvidencePackCreationResponse> {
+  return requestBackend<EvidencePackCreationResponse>("/api/evidence-packs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchEvidencePack(evidencePackId: string): Promise<EvidencePack> {
+  return requestBackend<EvidencePack>(`/api/evidence-packs/${evidencePackId}`);
+}
+
+export async function startEvidencePackGrounding(evidencePackId: string): Promise<EvidencePackGroundingResponse> {
+  return requestBackend<EvidencePackGroundingResponse>(`/api/evidence-packs/${evidencePackId}/start-grounding`, {
+    method: "POST",
+  });
+}
+
+export interface CreateSourceTopicRequest {
+  name: string;
+  description?: string;
+  parent_topic_id?: string | null;
+  topic_type?: string;
+}
+
+export async function fetchSourceTopics(): Promise<SourceTopic[]> {
+  const response = await requestBackend<{ topics: SourceTopic[] }>("/api/source-topics");
+  return response.topics;
+}
+
+export async function createSourceTopic(payload: CreateSourceTopicRequest): Promise<SourceTopic> {
+  return requestBackend<SourceTopic>("/api/source-topics", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSourceTopic(
+  topicId: string,
+  payload: Partial<CreateSourceTopicRequest> & { status?: string },
+): Promise<SourceTopic> {
+  return requestBackend<SourceTopic>(`/api/source-topics/${topicId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface FetchSourceRegistryParams {
+  topic_id?: string;
+  smart_view?: string;
+  query?: string;
+  source_kind?: string;
+  authority_level?: string;
+  freshness_status?: string;
+  source_status?: string;
+  case_id?: string;
+}
+
+function buildQuery(params: Record<string, string | undefined | null>): string {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) query.set(key, value);
+  });
+  const serialized = query.toString();
+  return serialized ? `?${serialized}` : "";
+}
+
+export async function fetchSourceRegistry(params: FetchSourceRegistryParams = {}): Promise<SourceRegistryListResponse> {
+  return requestBackend<SourceRegistryListResponse>(`/api/source-registry${buildQuery({ ...params })}`);
+}
+
+export async function fetchSourceUsage(globalSourceId: string): Promise<SourceUsageResponse> {
+  return requestBackend<SourceUsageResponse>(`/api/source-registry/${globalSourceId}/usage`);
+}
+
+export async function createSourceTopicAssignment(payload: {
+  global_source_id: string;
+  topic_id: string;
+  relevance_score?: number;
+  reason?: string;
+  assigned_by?: string;
+}): Promise<SourceTopicAssignment> {
+  return requestBackend<SourceTopicAssignment>("/api/source-topic-assignments", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function removeSourceTopicAssignment(assignmentId: string): Promise<SourceTopicAssignment> {
+  return requestBackend<SourceTopicAssignment>(`/api/source-topic-assignments/${assignmentId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchCaseSourceSelection(
+  caseId: string,
+  query?: string,
+): Promise<CaseSourceSelectionResponse> {
+  return requestBackend<CaseSourceSelectionResponse>(
+    `/api/cases/${caseId}/source-selection${buildQuery({ query })}`,
+  );
+}
+
+export async function attachGlobalSourceToCase(payload: {
+  case_id: string;
+  global_source_id: string;
+  topic_id?: string | null;
+  assignment_id?: string | null;
+}): Promise<SourceDocumentSnapshotResponse> {
+  return requestBackend<SourceDocumentSnapshotResponse>(`/api/cases/${payload.case_id}/source-documents/from-library`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

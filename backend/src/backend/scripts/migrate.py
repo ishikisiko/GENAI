@@ -4,43 +4,40 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+import asyncpg
 
 
 async def _run(database_url: str, migrations_dir: Path) -> None:
-    if "postgresql+asyncpg" not in database_url and "postgresql://" in database_url:
-        database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if database_url.startswith("postgresql+asyncpg://"):
+        database_url = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
-    engine = create_async_engine(database_url, future=True)
-    async with engine.begin() as connection:
+    connection = await asyncpg.connect(database_url)
+    try:
         await connection.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS _backend_migrations (
-                  migration_id text PRIMARY KEY,
-                  applied_at timestamptz NOT NULL DEFAULT now()
-                );
-                """
-            )
+            """
+            CREATE TABLE IF NOT EXISTS _backend_migrations (
+              migration_id text PRIMARY KEY,
+              applied_at timestamptz NOT NULL DEFAULT now()
+            );
+            """
         )
 
-        applied = await connection.execute(text("SELECT migration_id FROM _backend_migrations"))
-        applied_ids = {row[0] for row in applied.all()}
+        applied = await connection.fetch("SELECT migration_id FROM _backend_migrations")
+        applied_ids = {row["migration_id"] for row in applied}
 
         for file_path in sorted(migrations_dir.glob("*.sql")):
             migration_id = file_path.name
             if migration_id in applied_ids:
                 continue
             sql = file_path.read_text()
-            await connection.execute(text(sql))
-            await connection.execute(
-                text(
-                    "INSERT INTO _backend_migrations (migration_id) VALUES (:migration_id)"
-                ),
-                {"migration_id": migration_id},
-            )
-    await engine.dispose()
+            async with connection.transaction():
+                await connection.execute(sql)
+                await connection.execute(
+                    "INSERT INTO _backend_migrations (migration_id) VALUES ($1)",
+                    migration_id,
+                )
+    finally:
+        await connection.close()
 
 
 def main() -> None:

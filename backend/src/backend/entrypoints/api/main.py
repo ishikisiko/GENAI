@@ -11,6 +11,8 @@ from backend.db import Database
 from backend.repository.extraction_repository import ExtractionRepository
 from backend.repository.job_repository import JobRepository
 from backend.repository.simulation_repository import SimulationRepository
+from backend.repository.source_discovery_repository import SourceDiscoveryRepository
+from backend.repository.source_library_repository import SourceLibraryRepository
 from backend.shared.config import BackendConfig
 from backend.shared.errors import ApplicationError, DependencyError, ErrorCode
 from backend.shared.logging import configure_logging, correlation_context, get_logger
@@ -22,6 +24,21 @@ from backend.services.agent_generation_contracts import AgentGenerationRequest
 from backend.services.agent_generation_service import AgentGenerationService
 from backend.services.simulation_contracts import SimulationSubmissionRequest
 from backend.services.simulation_service import SimulationService
+from backend.services.source_discovery_contracts import (
+    EvidencePackCreateRequest,
+    SourceCandidateLibrarySaveRequest,
+    SourceCandidateReviewRequest,
+    SourceDiscoveryJobCreateRequest,
+)
+from backend.services.source_discovery_service import SourceDiscoveryService, build_source_discovery_search_provider
+from backend.services.source_library_contracts import (
+    AttachGlobalSourceRequest,
+    CaseSourceTopicCreateRequest,
+    SourceTopicAssignmentCreateRequest,
+    SourceTopicCreateRequest,
+    SourceTopicUpdateRequest,
+)
+from backend.services.source_library_service import SourceLibraryService
 
 
 def _apply_cors_headers(request: Request, response: Response, config: BackendConfig) -> None:
@@ -52,6 +69,8 @@ def create_app(
     simulation_service: SimulationService | None = None,
     extraction_service: ExtractionService | None = None,
     agent_generation_service: AgentGenerationService | None = None,
+    source_discovery_service: SourceDiscoveryService | None = None,
+    source_library_service: SourceLibraryService | None = None,
 ) -> FastAPI:
     configure_logging(config.app_name, config.log_level)
     logger = get_logger("backend.api")
@@ -68,6 +87,15 @@ def create_app(
         job_repository=repository,
         llm_client=llm_client,
     )
+    source_discovery_service = source_discovery_service or SourceDiscoveryService(
+        source_repository=SourceDiscoveryRepository(database),
+        job_repository=repository,
+        extraction_repository=ExtractionRepository(database),
+        search_provider=build_source_discovery_search_provider(config),
+    )
+    source_library_service = source_library_service or SourceLibraryService(
+        repository=SourceLibraryRepository(database),
+    )
     agent_generation_service = agent_generation_service or AgentGenerationService(
         simulation_repository=SimulationRepository(database),
         llm_client=llm_client,
@@ -80,6 +108,8 @@ def create_app(
     app.state.simulation_service = simulation_service
     app.state.extraction_service = extraction_service
     app.state.agent_generation_service = agent_generation_service
+    app.state.source_discovery_service = source_discovery_service
+    app.state.source_library_service = source_library_service
 
     app.add_middleware(
         CORSMiddleware,
@@ -210,5 +240,117 @@ def create_app(
     @app.post("/api/agent-generation")
     async def generate_agents(request: AgentGenerationRequest):
         return (await app.state.agent_generation_service.generate(request)).model_dump()
+
+    @app.post("/api/source-discovery/jobs")
+    async def create_source_discovery_job(request: SourceDiscoveryJobCreateRequest):
+        return (await app.state.source_discovery_service.submit(request)).model_dump()
+
+    @app.get("/api/source-discovery/jobs/{job_id}")
+    async def get_source_discovery_job(job_id: str):
+        return (await app.state.source_discovery_service.get_status(job_id)).model_dump()
+
+    @app.get("/api/source-candidates")
+    async def list_source_candidates(
+        case_id: str | None = None,
+        discovery_job_id: str | None = None,
+        review_status: str | None = None,
+    ):
+        return (
+            await app.state.source_discovery_service.list_candidates(
+                case_id=case_id,
+                discovery_job_id=discovery_job_id,
+                review_status=review_status,
+            )
+        ).model_dump()
+
+    @app.patch("/api/source-candidates/{source_id}")
+    async def update_source_candidate(source_id: str, request: SourceCandidateReviewRequest):
+        return (await app.state.source_discovery_service.update_candidate_review(source_id, request)).model_dump()
+
+    @app.post("/api/source-candidates/{source_id}/save-to-library")
+    async def save_source_candidate_to_library(source_id: str, request: SourceCandidateLibrarySaveRequest):
+        return (await app.state.source_library_service.save_candidate_to_library(source_id, request)).model_dump()
+
+    @app.post("/api/evidence-packs")
+    async def create_evidence_pack(request: EvidencePackCreateRequest):
+        return (await app.state.source_discovery_service.create_evidence_pack(request)).model_dump()
+
+    @app.get("/api/evidence-packs/{evidence_pack_id}")
+    async def get_evidence_pack(evidence_pack_id: str):
+        return (await app.state.source_discovery_service.get_evidence_pack(evidence_pack_id)).model_dump()
+
+    @app.post("/api/evidence-packs/{evidence_pack_id}/start-grounding")
+    async def start_evidence_pack_grounding(evidence_pack_id: str):
+        return (await app.state.source_discovery_service.start_grounding(evidence_pack_id)).model_dump()
+
+    @app.get("/api/source-topics")
+    async def list_source_topics():
+        return (await app.state.source_library_service.list_topics()).model_dump()
+
+    @app.post("/api/source-topics")
+    async def create_source_topic(request: SourceTopicCreateRequest):
+        return (await app.state.source_library_service.create_topic(request)).model_dump()
+
+    @app.get("/api/source-topics/{topic_id}")
+    async def get_source_topic(topic_id: str):
+        return (await app.state.source_library_service.get_topic(topic_id)).model_dump()
+
+    @app.patch("/api/source-topics/{topic_id}")
+    async def update_source_topic(topic_id: str, request: SourceTopicUpdateRequest):
+        return (await app.state.source_library_service.update_topic(topic_id, request)).model_dump()
+
+    @app.post("/api/case-source-topics")
+    async def create_case_source_topic(request: CaseSourceTopicCreateRequest):
+        return (await app.state.source_library_service.create_case_topic(request)).model_dump()
+
+    @app.post("/api/source-topic-assignments")
+    async def create_source_topic_assignment(request: SourceTopicAssignmentCreateRequest):
+        return (await app.state.source_library_service.create_assignment(request)).model_dump()
+
+    @app.delete("/api/source-topic-assignments/{assignment_id}")
+    async def remove_source_topic_assignment(assignment_id: str):
+        return (await app.state.source_library_service.remove_assignment(assignment_id)).model_dump()
+
+    @app.get("/api/source-registry")
+    async def list_source_registry(
+        topic_id: str | None = None,
+        smart_view: str | None = None,
+        query: str | None = None,
+        source_kind: str | None = None,
+        authority_level: str | None = None,
+        freshness_status: str | None = None,
+        source_status: str | None = None,
+        case_id: str | None = None,
+    ):
+        return (
+            await app.state.source_library_service.list_registry(
+                topic_id=topic_id,
+                smart_view=smart_view,
+                query=query,
+                source_kind=source_kind,
+                authority_level=authority_level,
+                freshness_status=freshness_status,
+                source_status=source_status,
+                case_id=case_id,
+            )
+        ).model_dump()
+
+    @app.get("/api/source-registry/{global_source_id}/usage")
+    async def get_source_usage(global_source_id: str):
+        return (await app.state.source_library_service.get_usage(global_source_id)).model_dump()
+
+    @app.get("/api/cases/{case_id}/source-selection")
+    async def get_case_source_selection(case_id: str, query: str | None = None):
+        return (await app.state.source_library_service.get_case_selection(case_id, query)).model_dump()
+
+    @app.post("/api/cases/{case_id}/source-documents/from-library")
+    async def attach_global_source_to_case(case_id: str, request: AttachGlobalSourceRequest):
+        if request.case_id != case_id:
+            raise ApplicationError(
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Path case_id must match request case_id.",
+                status_code=400,
+            )
+        return (await app.state.source_library_service.attach_global_source(request)).model_dump()
 
     return app

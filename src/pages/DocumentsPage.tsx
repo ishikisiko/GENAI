@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   PButton, PButtonPure, PDivider, PHeading, PIcon, PInlineNotification, PSpinner, PTag, PText,
@@ -8,13 +8,19 @@ import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { DOC_TYPE_LABELS } from "../lib/constants";
 import { getErrorMessage } from "../lib/errors";
-import { fetchGraphExtractionStatus, submitGraphExtraction } from "../lib/backend";
+import {
+  attachGlobalSourceToCase,
+  fetchCaseSourceSelection,
+  fetchGraphExtractionStatus,
+  submitGraphExtraction,
+} from "../lib/backend";
 import { supabase } from "../lib/supabase";
 import type {
   CrisisCase,
   DocType,
-  GlobalSourceDocument,
+  CaseSourceSelectionResponse,
   GraphExtractionStatusResponse,
+  SourceRegistrySource,
   SourceDocument,
   SourceOrigin,
 } from "../lib/types";
@@ -30,12 +36,20 @@ const DOC_TYPES: { value: DocType; label: string; desc: string; color: TagColor 
 const ORIGIN_LABELS: Record<SourceOrigin, string> = {
   case_upload: "Uploaded in Case",
   global_library: "Added from Global Library",
+  evidence_pack: "Evidence Pack",
 };
 
 const ORIGIN_COLORS: Record<SourceOrigin, TagColor> = {
   case_upload: "background-frosted",
   global_library: "notification-info-soft",
+  evidence_pack: "notification-success-soft",
 };
+
+interface DocumentsPageData {
+  currentCase: CrisisCase | null;
+  docs: SourceDocument[];
+  selection: CaseSourceSelectionResponse;
+}
 
 export default function DocumentsPage() {
   const { caseId } = useParams<{ caseId: string }>();
@@ -43,7 +57,7 @@ export default function DocumentsPage() {
 
   const [crisisCase, setCrisisCase] = useState<CrisisCase | null>(null);
   const [documents, setDocuments] = useState<SourceDocument[]>([]);
-  const [globalSources, setGlobalSources] = useState<GlobalSourceDocument[]>([]);
+  const [sourceSelection, setSourceSelection] = useState<CaseSourceSelectionResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [extracting, setExtracting] = useState(false);
   const [extractionStatus, setExtractionStatus] = useState<GraphExtractionStatusResponse | null>(null);
@@ -59,23 +73,66 @@ export default function DocumentsPage() {
   const [docContent, setDocContent] = useState("");
   const [docType, setDocType] = useState<DocType>("news");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [{ data: currentCase }, { data: docs }, { data: globals }] = await Promise.all([
+  const fetchPageData = useCallback(async (): Promise<DocumentsPageData> => {
+    const [{ data: currentCase }, { data: docs }, selection] = await Promise.all([
       supabase.from("crisis_cases").select("*").eq("id", caseId!).maybeSingle(),
       supabase.from("source_documents").select("*").eq("case_id", caseId!).order("created_at"),
-      supabase.from("global_source_documents").select("*").order("created_at", { ascending: false }),
+      fetchCaseSourceSelection(caseId!, query.trim() || undefined),
     ]);
 
-    setCrisisCase(currentCase);
-    setDocuments(docs ?? []);
-    setGlobalSources(globals ?? []);
-    setLoading(false);
-  }, [caseId]);
+    return {
+      currentCase,
+      docs: docs ?? [],
+      selection,
+    };
+  }, [caseId, query]);
+
+  const applyPageData = useCallback((pageData: DocumentsPageData) => {
+    setCrisisCase(pageData.currentCase);
+    setDocuments(pageData.docs);
+    setSourceSelection(pageData.selection);
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      applyPageData(await fetchPageData());
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError, "Failed to load documents and source selection."));
+    } finally {
+      setLoading(false);
+    }
+  }, [applyPageData, fetchPageData]);
 
   useEffect(() => {
-    if (caseId) void load();
-  }, [caseId, load]);
+    if (!caseId) return undefined;
+    let cancelled = false;
+
+    async function runInitialLoad() {
+      setLoading(true);
+      setError("");
+      try {
+        const pageData = await fetchPageData();
+        if (cancelled) return;
+        applyPageData(pageData);
+      } catch (requestError: unknown) {
+        if (!cancelled) {
+          setError(getErrorMessage(requestError, "Failed to load documents and source selection."));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void runInitialLoad();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyPageData, caseId, fetchPageData]);
 
   useEffect(() => {
     if (!extracting || !extractionStatus?.should_poll) {
@@ -127,6 +184,11 @@ export default function DocumentsPage() {
       title: docTitle.trim() || `${DOC_TYPE_LABELS[docType]} ${documents.length + 1}`,
       content: docContent.trim(),
       doc_type: docType,
+      source_kind: docType === "statement" ? "official" : docType,
+      authority_level: docType === "statement" ? "high" : "medium",
+      freshness_status: "current",
+      source_status: "active",
+      source_metadata: { created_from: "case_upload" },
     };
 
     const { data: globalDoc, error: globalError } = await supabase
@@ -145,7 +207,16 @@ export default function DocumentsPage() {
       case_id: caseId!,
       global_source_id: globalDoc.id,
       source_origin: "case_upload",
-      ...payload,
+      title: payload.title,
+      content: payload.content,
+      doc_type: payload.doc_type,
+      source_topic_id: null,
+      source_topic_assignment_id: null,
+      source_metadata: {
+        global_source_id: globalDoc.id,
+        source_kind: payload.source_kind,
+        source_status: payload.source_status,
+      },
     });
 
     if (caseError) {
@@ -164,9 +235,22 @@ export default function DocumentsPage() {
     await load();
   }
 
+  function allSelectionSources(): SourceRegistrySource[] {
+    const seen = new Set<string>();
+    const sources: SourceRegistrySource[] = [];
+    for (const section of sourceSelection?.sections || []) {
+      for (const source of section.sources) {
+        if (seen.has(source.id)) continue;
+        seen.add(source.id);
+        sources.push(source);
+      }
+    }
+    return sources;
+  }
+
   async function addSelectedFromGlobalLibrary() {
-    const selectedSources = globalSources.filter((source) =>
-      selectedGlobalSourceIds.includes(source.id) && !linkedGlobalSourceIds.has(source.id)
+    const selectedSources = allSelectionSources().filter((source) =>
+      selectedGlobalSourceIds.includes(source.id) && !linkedGlobalSourceIds.has(source.id) && !source.already_in_case
     );
 
     if (selectedSources.length === 0) {
@@ -178,19 +262,19 @@ export default function DocumentsPage() {
     setError("");
     setSuccess("");
 
-    const { error: insertError } = await supabase.from("source_documents").insert(
-      selectedSources.map((source) => ({
-        case_id: caseId!,
-        global_source_id: source.id,
-        source_origin: "global_library",
-        title: source.title,
-        content: source.content,
-        doc_type: source.doc_type,
-      }))
-    );
-
-    if (insertError) {
-      setError(insertError.message);
+    try {
+      await Promise.all(
+        selectedSources.map((source) =>
+          attachGlobalSourceToCase({
+            case_id: caseId!,
+            global_source_id: source.id,
+            topic_id: source.topic_assignments[0]?.topic_id || null,
+            assignment_id: source.topic_assignments[0]?.assignment_id || null,
+          })
+        )
+      );
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError, "Failed to add selected registry sources."));
       setAddingGlobalSources(false);
       return;
     }
@@ -259,25 +343,15 @@ export default function DocumentsPage() {
     }
   }
 
-  const linkedGlobalSourceIds = useMemo(
-    () => new Set(documents.map((doc) => doc.global_source_id).filter(Boolean)),
-    [documents]
-  );
+  const linkedGlobalSourceIds = new Set<string>();
+  for (const document of documents) {
+    if (document.global_source_id) {
+      linkedGlobalSourceIds.add(document.global_source_id);
+    }
+  }
 
-  const filteredGlobalSources = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return globalSources;
-    return globalSources.filter((source) =>
-      source.title.toLowerCase().includes(normalized)
-      || source.content.toLowerCase().includes(normalized)
-      || DOC_TYPE_LABELS[source.doc_type].toLowerCase().includes(normalized)
-    );
-  }, [globalSources, query]);
-
-  const selectedVisibleCount = useMemo(
-    () => filteredGlobalSources.filter((source) => selectedGlobalSourceIds.includes(source.id)).length,
-    [filteredGlobalSources, selectedGlobalSourceIds]
-  );
+  const selectionSources = allSelectionSources();
+  const selectedVisibleCount = selectionSources.filter((source) => selectedGlobalSourceIds.includes(source.id)).length;
 
   if (loading) {
     return (
@@ -415,9 +489,9 @@ export default function DocumentsPage() {
             <div className="bg-surface border border-contrast-low rounded-lg overflow-hidden">
               <div className="px-fluid-md py-static-md border-b border-contrast-low flex items-center justify-between">
                 <div>
-                  <PHeading size="small">Select from Global Library</PHeading>
+                  <PHeading size="small">Add from Source Registry</PHeading>
                   <PText size="small" className="text-contrast-medium">
-                    Reuse previously uploaded sources without re-pasting content. You can select multiple sources at once.
+                    Start with recommended and same-topic sources, then search globally when needed.
                   </PText>
                 </div>
                 <div className="flex items-center gap-static-sm">
@@ -435,62 +509,93 @@ export default function DocumentsPage() {
               </div>
 
               <div className="p-fluid-md border-b border-contrast-low">
-                <PText size="small" weight="semi-bold" className="mb-static-xs">Search Global Sources</PText>
+                <PText size="small" weight="semi-bold" className="mb-static-xs">Search Source Registry</PText>
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search by title, content, or type..."
+                  placeholder="Search title, content, source kind, or topic context..."
                   className="w-full border border-contrast-low rounded bg-canvas px-static-md py-static-sm text-primary placeholder:text-contrast-low focus:outline-none focus:border-primary"
                   style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "15px" }}
                 />
                 <PText size="small" className="text-contrast-medium mt-static-xs">
-                  {selectedVisibleCount > 0 ? `${selectedVisibleCount} selected in current results.` : "Select one or more sources, then click Add Selected."}
+                  {selectedVisibleCount > 0
+                    ? `${selectedVisibleCount} selected in current results.`
+                    : "Recommended, same-topic, related, and global search sources stay separated."}
                 </PText>
               </div>
 
-              {filteredGlobalSources.length === 0 ? (
+              {(sourceSelection?.sections || []).length === 0 ? (
                 <div className="p-fluid-lg flex flex-col items-center gap-static-md text-center">
                   <PIcon name="document" size="large" color="contrast-medium" />
                   <PText className="text-contrast-medium">
-                    {globalSources.length === 0 ? "Global library is empty." : "No global sources match the current search."}
+                    No registry sources match the current case selection.
                   </PText>
                 </div>
               ) : (
                 <div className="divide-y divide-contrast-low">
-                  {filteredGlobalSources.map((source) => {
-                    const typeConfig = DOC_TYPES.find((type) => type.value === source.doc_type)!;
-                    const alreadyLinked = linkedGlobalSourceIds.has(source.id);
-                    const isSelected = selectedGlobalSourceIds.includes(source.id);
-                    return (
-                      <div key={source.id} className="p-fluid-sm flex gap-static-md items-start">
-                        <div className="pt-static-xs w-4 shrink-0">
-                          {!alreadyLinked && (
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              disabled={addingGlobalSources}
-                              onChange={() => toggleGlobalSourceSelection(source.id)}
-                              className="h-4 w-4 accent-[var(--p-color-state-success)] cursor-pointer disabled:cursor-not-allowed"
-                            />
-                          )}
+                  {(sourceSelection?.sections || []).map((section) => (
+                    <div key={section.key}>
+                      <div className="px-fluid-md py-static-sm bg-canvas border-b border-contrast-low flex items-center justify-between">
+                        <div>
+                          <PText size="small" weight="semi-bold">{section.title}</PText>
+                          <PText size="x-small" className="text-contrast-medium">{section.description}</PText>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-static-sm mb-static-xs flex-wrap">
-                            <PTag color={typeConfig.color}>{typeConfig.label}</PTag>
-                            {alreadyLinked && <PTag color="notification-success-soft">Already in Case</PTag>}
-                            {!alreadyLinked && isSelected && <PTag color="background-frosted">Selected</PTag>}
-                            <PText size="small" className="text-contrast-low">
-                              {new Date(source.created_at).toLocaleString()}
-                            </PText>
-                          </div>
-                          <PText size="small" weight="semi-bold" className="mb-static-xs">{source.title}</PText>
-                          <PText size="small" className="text-contrast-medium line-clamp-4">
-                            {source.content}
-                          </PText>
-                        </div>
+                        <PTag color="background-frosted">{section.sources.length}</PTag>
                       </div>
-                    );
-                  })}
+                      {section.key === "manual_upload" ? (
+                        <div className="p-fluid-sm flex items-center justify-between gap-static-sm">
+                          <PText size="small" className="text-contrast-medium">Paste a new case document when registry sources do not fit.</PText>
+                          <PButton variant="secondary" icon="add" onClick={() => setShowUploadForm(true)}>
+                            Manual Upload
+                          </PButton>
+                        </div>
+                      ) : section.sources.length === 0 ? (
+                        <div className="p-fluid-sm">
+                          <PText size="small" className="text-contrast-medium">No sources in this section.</PText>
+                        </div>
+                      ) : section.sources.map((source) => {
+                        const alreadyLinked = linkedGlobalSourceIds.has(source.id) || source.already_in_case;
+                        const isSelected = selectedGlobalSourceIds.includes(source.id);
+                        return (
+                          <div key={`${section.key}-${source.id}`} className="p-fluid-sm flex gap-static-md items-start">
+                            <div className="pt-static-xs w-4 shrink-0">
+                              {!alreadyLinked && (
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  disabled={addingGlobalSources}
+                                  onChange={() => toggleGlobalSourceSelection(source.id)}
+                                  className="h-4 w-4 accent-[var(--p-color-state-success)] cursor-pointer disabled:cursor-not-allowed"
+                                />
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-static-sm mb-static-xs flex-wrap">
+                                <PTag color="background-frosted">{source.source_kind}</PTag>
+                                <PTag color={source.authority_level === "high" ? "notification-success-soft" : "background-frosted"}>{source.authority_level}</PTag>
+                                {alreadyLinked && <PTag color="notification-success-soft">Already in Case</PTag>}
+                                {!alreadyLinked && isSelected && <PTag color="background-frosted">Selected</PTag>}
+                                {source.duplicate_candidate && <PTag color="notification-warning-soft">Duplicate</PTag>}
+                                <PText size="small" className="text-contrast-low">
+                                  {new Date(source.created_at).toLocaleString()}
+                                </PText>
+                              </div>
+                              <PText size="small" weight="semi-bold" className="mb-static-xs">{source.title}</PText>
+                              <PText size="small" className="text-contrast-medium line-clamp-4">
+                                {source.content}
+                              </PText>
+                              <div className="flex gap-static-xs flex-wrap mt-static-xs">
+                                {source.topic_assignments.slice(0, 3).map((assignment) => (
+                                  <PTag key={assignment.assignment_id} color="background-frosted">{assignment.topic_name}</PTag>
+                                ))}
+                                {source.usage_count > 0 && <PTag color="notification-info-soft">{source.usage_count} uses</PTag>}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -540,6 +645,17 @@ export default function DocumentsPage() {
                         : "Extraction failed."}
                 </PText>
               )}
+
+              <PDivider className="my-fluid-md" />
+
+              <PButton
+                variant="secondary"
+                icon="search"
+                className="w-full"
+                onClick={() => navigate(`/cases/${caseId}/source-discovery`)}
+              >
+                Discover Sources
+              </PButton>
 
               {documents.length < 3 && (
                 <PText size="small" className="text-warning mt-static-sm text-center">

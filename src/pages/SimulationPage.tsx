@@ -101,24 +101,14 @@ export default function SimulationPage() {
   const [baselineTotalRounds, setBaselineTotalRounds] = useState(5);
   const [interventionTotalRounds, setInterventionTotalRounds] = useState(5);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const fetchPageData = useCallback(async () => {
     const [{ data: c }, { data: ags }, { data: rs }] = await Promise.all([
       supabase.from("crisis_cases").select("*").eq("id", caseId!).maybeSingle(),
       supabase.from("agent_profiles").select("*").eq("case_id", caseId!),
       supabase.from("simulation_runs").select("*").eq("case_id", caseId!).order("created_at"),
     ]);
-    setCrisisCase(c);
-    setAgents(ags ?? []);
     const runsData = rs ?? [];
-    setRuns(runsData);
     const activeRun = [...runsData].reverse().find((run) => isActiveRun(run) && run.job_id);
-    setActiveRunId(activeRun?.id ?? null);
-    setActiveJobId(activeRun?.job_id ?? null);
-    if (!activeRun) {
-      setJobStatus(null);
-      setRunStatus(null);
-    }
 
     const runStates: Record<string, RoundState[]> = {};
     for (const run of runsData) {
@@ -131,17 +121,60 @@ export default function SimulationPage() {
         runStates[run.id] = states ?? [];
       }
     }
-    setRoundStates(runStates);
-    setLoading(false);
+
+    return {
+      crisisCase: c,
+      agents: ags ?? [],
+      runsData,
+      activeRun,
+      runStates,
+    };
   }, [caseId]);
 
-  useEffect(() => {
-    if (caseId) void load();
-  }, [caseId, load]);
+  const load = useCallback(async () => {
+    setLoading(true);
+    const data = await fetchPageData();
+    setCrisisCase(data.crisisCase);
+    setAgents(data.agents);
+    setRuns(data.runsData);
+    setActiveRunId(data.activeRun?.id ?? null);
+    setActiveJobId(data.activeRun?.job_id ?? null);
+    if (!data.activeRun) {
+      setJobStatus(null);
+      setRunStatus(null);
+    }
+    setRoundStates(data.runStates);
+    setLoading(false);
+  }, [fetchPageData]);
 
   useEffect(() => {
-    setInjectionRound((current) => Math.min(current, interventionTotalRounds));
-  }, [interventionTotalRounds]);
+    if (!caseId) return undefined;
+    let cancelled = false;
+
+    async function runInitialLoad() {
+      const data = await fetchPageData();
+      if (cancelled) return;
+      setCrisisCase(data.crisisCase);
+      setAgents(data.agents);
+      setRuns(data.runsData);
+      setActiveRunId(data.activeRun?.id ?? null);
+      setActiveJobId(data.activeRun?.job_id ?? null);
+      if (!data.activeRun) {
+        setJobStatus(null);
+        setRunStatus(null);
+      }
+      setRoundStates(data.runStates);
+      setLoading(false);
+    }
+
+    void runInitialLoad();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [caseId, fetchPageData]);
+
+  const effectiveInjectionRound = Math.min(injectionRound, interventionTotalRounds);
 
   useEffect(() => {
     if (!activeJobId || !activeRunId) return undefined;
@@ -203,7 +236,7 @@ export default function SimulationPage() {
         ...(type === "intervention" && {
           strategy_type: strategyType,
           strategy_message: strategyMessage || undefined,
-          injection_round: injectionRound,
+          injection_round: effectiveInjectionRound,
         }),
       });
 
@@ -395,7 +428,9 @@ export default function SimulationPage() {
                     onChange={(e) => {
                       const next = Number(e.target.value);
                       if (Number.isFinite(next)) {
-                        setInterventionTotalRounds(Math.min(Math.max(next, 1), 20));
+                        const clamped = Math.min(Math.max(next, 1), 20);
+                        setInterventionTotalRounds(clamped);
+                        setInjectionRound((current) => Math.min(current, clamped));
                       }
                     }}
                     className="w-full border border-contrast-low rounded bg-canvas px-static-sm py-static-xs text-primary focus:outline-none focus:border-primary text-sm"
@@ -416,7 +451,7 @@ export default function SimulationPage() {
                         key={r}
                         onClick={() => setInjectionRound(r)}
                         className={`w-9 h-9 rounded border text-sm font-medium transition-colors ${
-                          injectionRound === r
+                          effectiveInjectionRound === r
                             ? "border-primary bg-primary text-[white]"
                             : "border-contrast-low bg-canvas text-contrast-medium hover:border-primary"
                         }`}
@@ -427,7 +462,7 @@ export default function SimulationPage() {
                     ))}
                   </div>
                   <PText size="small" className="text-contrast-medium mt-static-xs">
-                    Strategy applied at the start of round {injectionRound}
+                    Strategy applied at the start of round {effectiveInjectionRound}
                   </PText>
                 </div>
 

@@ -28,3 +28,4 @@ dist-ssr
 supabase/functions/.env
 .bolt/
 .codex
+.omx/

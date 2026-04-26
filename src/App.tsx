@@ -4,6 +4,9 @@ import Dashboard from "./pages/Dashboard";
 import CaseCreation from "./pages/CaseCreation";
 import GlobalSourcesPage from "./pages/GlobalSourcesPage";
 import DocumentsPage from "./pages/DocumentsPage";
+import SourceDiscoverySetupPage from "./pages/SourceDiscoverySetupPage";
+import CandidateSourcesReviewPage from "./pages/CandidateSourcesReviewPage";
+import EvidencePackPreviewPage from "./pages/EvidencePackPreviewPage";
 import GroundingPage from "./pages/GroundingPage";
 import SimulationPage from "./pages/SimulationPage";
 import ComparisonPage from "./pages/ComparisonPage";
@@ -16,6 +19,9 @@ export default function App() {
         <Route path="/cases/new" element={<Layout><CaseCreation /></Layout>} />
         <Route path="/sources" element={<Layout><GlobalSourcesPage /></Layout>} />
         <Route path="/cases/:caseId/documents" element={<Layout><DocumentsPage /></Layout>} />
+        <Route path="/cases/:caseId/source-discovery" element={<Layout><SourceDiscoverySetupPage /></Layout>} />
+        <Route path="/cases/:caseId/source-discovery/:jobId/review" element={<Layout><CandidateSourcesReviewPage /></Layout>} />
+        <Route path="/cases/:caseId/evidence-packs/:packId" element={<Layout><EvidencePackPreviewPage /></Layout>} />
         <Route path="/cases/:caseId/grounding" element={<Layout><GroundingPage /></Layout>} />
         <Route path="/cases/:caseId/simulation" element={<Layout><SimulationPage /></Layout>} />
         <Route path="/cases/:caseId/comparison" element={<Layout><ComparisonPage /></Layout>} />
