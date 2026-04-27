@@ -42,7 +42,7 @@ export default function CaseCreation() {
         breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "New Case" }]}
       />
 
-      <div className="p-fluid-lg max-w-2xl">
+      <div className="p-fluid-lg w-full">
         {error && (
           <PInlineNotification
             heading="Validation Error"
@@ -88,7 +88,7 @@ export default function CaseCreation() {
             />
           </div>
 
-          <div className="pt-fluid-sm border-t border-contrast-low flex gap-static-md">
+          <div className="pt-fluid-sm border-t border-contrast-low flex flex-wrap gap-static-md">
             <PButton
               loading={loading}
               disabled={loading || !title.trim()}

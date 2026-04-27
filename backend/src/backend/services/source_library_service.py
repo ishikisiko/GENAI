@@ -9,6 +9,7 @@ from backend.domain.simulation_records import (
     SourceTopicRecord,
 )
 from backend.repository.source_library_repository import SourceLibraryRepository, SourceRegistryEntry
+from backend.repository.source_library_repository import SourceSemanticRecommendationEntry
 from backend.services.source_discovery_contracts import (
     SourceCandidateLibrarySaveRequest,
     SourceCandidateLibrarySaveResponse,
@@ -20,9 +21,12 @@ from backend.services.source_library_contracts import (
     CaseSourceTopicCreateRequest,
     CaseSourceTopicResponse,
     SourceDocumentSnapshotResponse,
+    SemanticRecallResponse,
+    SourceMatchedFragmentResponse,
     SourceRegistryAssignmentSummary,
     SourceRegistryListResponse,
     SourceRegistrySourceResponse,
+    SourceRankingReasonResponse,
     SourceTopicAssignmentCreateRequest,
     SourceTopicAssignmentResponse,
     SourceTopicCreateRequest,
@@ -122,6 +126,7 @@ class SourceLibraryService:
     async def get_case_selection(self, case_id: str, query: str | None = None) -> CaseSourceSelectionResponse:
         case_topics = await self._repository.list_case_topics(case_id)
         topic_ids = [str(topic.id) for _, topic in case_topics]
+        semantic_result = await self._repository.semantic_recommendations(case_id, query=query, limit=12)
 
         same_entries = await self._entries_for_topics(topic_ids, case_id)
         related_topic_ids = await self._repository.related_topic_ids(topic_ids)
@@ -146,6 +151,12 @@ class SourceLibraryService:
                 title="Recommended for this case",
                 description="Sources from the current case topics that are not already attached.",
                 sources=[self._registry_source_response(entry) for entry in recommended_entries],
+            ),
+            CaseSourceSelectionSection(
+                key="semantic_matches",
+                title="Semantic matches",
+                description="Source-level recommendations from semantically matched evidence fragments.",
+                sources=[self._semantic_source_response(entry) for entry in semantic_result.entries],
             ),
             CaseSourceSelectionSection(
                 key="same_topic",
@@ -176,6 +187,13 @@ class SourceLibraryService:
             case_id=case_id,
             case_topics=[self._case_topic_response(case_topic) for case_topic, _ in case_topics],
             sections=sections,
+            semantic_recall=SemanticRecallResponse(
+                applied=semantic_result.applied,
+                reason=semantic_result.reason,
+                query=semantic_result.query,
+                indexed_fragment_count=semantic_result.indexed_fragment_count,
+                matched_fragment_count=semantic_result.matched_fragment_count,
+            ),
         )
 
     async def attach_global_source(self, request: AttachGlobalSourceRequest) -> SourceDocumentSnapshotResponse:
@@ -258,6 +276,10 @@ class SourceLibraryService:
         source = entry.source
         return SourceRegistrySourceResponse(
             id=str(source.id),
+            source_scope="global",
+            global_source_id=str(source.id),
+            candidate_id=None,
+            candidate_review_status=None,
             title=source.title,
             content=source.content,
             doc_type=source.doc_type,
@@ -288,6 +310,88 @@ class SourceLibraryService:
         )
 
     @staticmethod
+    def _semantic_source_response(entry: SourceSemanticRecommendationEntry) -> SourceRegistrySourceResponse:
+        matched_fragments = [
+            SourceMatchedFragmentResponse(
+                id=str(match.fragment.id),
+                source_scope=match.source_scope,  # type: ignore[arg-type]
+                source_id=match.source_id,
+                fragment_index=match.fragment.fragment_index,
+                text=match.fragment.fragment_text,
+                similarity=match.similarity,
+                content_hash=match.fragment.content_hash,
+            )
+            for match in entry.matched_fragments
+        ]
+        ranking_reasons = [
+            SourceRankingReasonResponse(
+                key=reason.key,
+                label=reason.label,
+                value=reason.value,
+                score=reason.score,
+            )
+            for reason in entry.ranking_reasons
+        ]
+
+        if entry.source is not None:
+            source = SourceLibraryService._registry_source_response(
+                SourceRegistryEntry(
+                    source=entry.source,
+                    assignments=entry.assignments,
+                    usage_count=entry.usage_count,
+                    duplicate_candidate=entry.duplicate_candidate,
+                    already_in_case=entry.already_in_case,
+                )
+            )
+            source.semantic_support = entry.semantic_support
+            source.final_score = entry.final_score
+            source.matched_fragments = matched_fragments
+            source.ranking_reasons = ranking_reasons
+            return source
+
+        if entry.candidate is None:
+            raise ApplicationError(
+                code=ErrorCode.INTERNAL_ERROR,
+                message="Semantic recommendation is missing source data.",
+                status_code=500,
+            )
+
+        candidate = entry.candidate
+        review_status = str(candidate.review_status)
+        return SourceRegistrySourceResponse(
+            id=str(candidate.id),
+            source_scope="candidate",
+            global_source_id=None,
+            candidate_id=str(candidate.id),
+            candidate_review_status=review_status,
+            title=candidate.title,
+            content=candidate.content or candidate.excerpt,
+            doc_type=_doc_type_for_source_kind(candidate.source_type or candidate.classification),
+            canonical_url=candidate.canonical_url,
+            content_hash=candidate.content_hash,
+            source_kind=candidate.source_type or candidate.classification or "news",
+            authority_level=_authority_level_for_candidate(candidate.classification or candidate.source_type),
+            freshness_status="current",
+            source_status="candidate",
+            source_metadata={
+                "discovery_job_id": str(candidate.discovery_job_id),
+                "provider": candidate.provider,
+                "provider_metadata": candidate.provider_metadata or {},
+                "url": candidate.url,
+            },
+            created_at=format_dt(candidate.created_at) or "",
+            updated_at=format_dt(candidate.updated_at) or "",
+            topic_assignments=[],
+            usage_count=0,
+            duplicate_candidate=False,
+            already_in_case=False,
+            semantic_support=entry.semantic_support,
+            final_score=entry.final_score,
+            matched_fragments=matched_fragments,
+            ranking_reasons=ranking_reasons,
+        )
+
+    @staticmethod
     def _snapshot_response(document: SourceDocumentRecord) -> SourceDocumentSnapshotResponse:
         return SourceDocumentSnapshotResponse(
             id=str(document.id),
@@ -312,3 +416,21 @@ def format_dt(value: datetime | None) -> str | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat()
+
+
+def _doc_type_for_source_kind(source_kind: str) -> str:
+    normalized = (source_kind or "").lower()
+    if normalized in {"official", "statement", "regulator", "company", "research", "academic"}:
+        return "statement"
+    if normalized in {"social", "complaint", "community"}:
+        return "complaint"
+    return "news"
+
+
+def _authority_level_for_candidate(source_kind: str) -> str:
+    normalized = (source_kind or "").lower()
+    if normalized in {"official", "statement", "regulator", "research", "academic"}:
+        return "high"
+    if normalized in {"social", "complaint", "community"}:
+        return "medium"
+    return "medium"

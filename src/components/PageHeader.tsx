@@ -20,7 +20,7 @@ export default function PageHeader({ title, subtitle, breadcrumbs, action }: Pro
   return (
     <div className="border-b border-contrast-low bg-canvas px-fluid-lg py-fluid-md">
       {breadcrumbs && breadcrumbs.length > 0 && (
-        <div className="flex items-center gap-static-xs mb-static-sm">
+        <div className="flex flex-wrap items-center gap-static-xs mb-static-sm">
           {breadcrumbs.map((b, i) => (
             <div key={i} className="flex items-center gap-static-xs">
               {i > 0 && <PText size="x-small" className="text-contrast-low">/</PText>}
@@ -39,14 +39,14 @@ export default function PageHeader({ title, subtitle, breadcrumbs, action }: Pro
           ))}
         </div>
       )}
-      <div className="flex items-start justify-between gap-static-md">
-        <div>
+      <div className="flex flex-col gap-static-md sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <PHeading size="large" tag="h1">{title}</PHeading>
           {subtitle && (
             <PText className="text-contrast-medium mt-static-xs">{subtitle}</PText>
           )}
         </div>
-        {action && <div className="shrink-0">{action}</div>}
+        {action && <div className="w-full sm:w-auto sm:shrink-0">{action}</div>}
       </div>
     </div>
   );

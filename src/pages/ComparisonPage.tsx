@@ -211,7 +211,7 @@ export default function ComparisonPage() {
         }
       />
 
-      <div className="p-fluid-lg max-w-6xl flex flex-col gap-fluid-md">
+      <div className="p-fluid-lg w-full flex flex-col gap-fluid-md">
         {noData ? (
           <div className="bg-surface border border-contrast-low rounded-lg p-fluid-xl flex flex-col items-center gap-static-md text-center">
             <PIcon name="compare" size="large" color="contrast-medium" />
@@ -244,7 +244,7 @@ export default function ComparisonPage() {
             )}
 
             {baselineData && interventionRuns.length > 0 && (
-              <div className="grid grid-cols-4 gap-static-sm">
+              <div className="grid grid-cols-1 gap-static-sm sm:grid-cols-2 2xl:grid-cols-4">
                 {metricTabs.map((tab) => {
                   const bVal = (baselineData.metrics.at(-1)?.[tab.key] as number) ?? 0;
                   const bestInterv = interventionRuns.reduce((best, rd) => {
@@ -350,7 +350,7 @@ export default function ComparisonPage() {
               <div className="divide-y divide-contrast-low">
                 {allRuns.map((rd) => (
                   <div key={rd.run.id} className="p-fluid-sm">
-                    <div className="flex items-center gap-static-sm mb-static-sm">
+                    <div className="flex flex-col gap-static-xs mb-static-sm lg:flex-row lg:items-center lg:gap-static-sm">
                       <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getRunColor(rd.run) }} />
                       <PText size="small" weight="semi-bold">{getRunLabel(rd.run)}</PText>
                       <PTag color={rd.run.run_type === "baseline" ? "background-frosted" : "notification-warning-soft"}>
@@ -363,10 +363,10 @@ export default function ComparisonPage() {
                         <div key={state.id}>
                           <button
                             onClick={() => setExpandedRound(expandedRound === state.id ? null : state.id)}
-                            className="w-full flex items-center justify-between px-static-sm py-static-xs rounded hover:bg-canvas transition-colors text-left"
+                            className="w-full flex flex-col gap-static-xs px-static-sm py-static-xs rounded hover:bg-canvas transition-colors text-left lg:flex-row lg:items-center lg:justify-between"
                             style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif" }}
                           >
-                            <div className="flex items-center gap-static-sm">
+                            <div className="flex flex-wrap items-center gap-static-sm">
                               <PText size="small" weight="semi-bold">Round {state.round_number}</PText>
                               {state.strategy_applied && (
                                 <PTag color="notification-warning-soft">
@@ -374,7 +374,7 @@ export default function ComparisonPage() {
                                 </PTag>
                               )}
                             </div>
-                            <div className="flex items-center gap-static-md">
+                            <div className="flex flex-wrap items-center gap-static-md">
                               <PText size="small" className="text-contrast-medium">
                                 Sentiment: <span className={state.overall_sentiment > 0 ? "text-success" : "text-error"}>
                                   {state.overall_sentiment.toFixed(2)}

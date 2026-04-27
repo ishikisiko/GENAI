@@ -178,7 +178,7 @@ export default function CandidateSourcesReviewPage() {
         action={job && <PTag color={statusColor}>{job.status}</PTag>}
       />
 
-      <div className="p-fluid-lg max-w-6xl">
+      <div className="p-fluid-lg w-full">
         {error && (
           <PInlineNotification heading="Error" description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
         )}
@@ -186,8 +186,8 @@ export default function CandidateSourcesReviewPage() {
           <PInlineNotification heading="Success" description={success} state="success" dismissButton className="mb-fluid-md" onDismiss={() => setSuccess("")} />
         )}
 
-        <div className="grid grid-cols-5 gap-fluid-md">
-          <div className="col-span-3 flex flex-col gap-static-sm">
+        <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-5">
+          <div className="flex flex-col gap-static-sm xl:col-span-3">
             {candidates.length === 0 ? (
               <div className="bg-surface border border-contrast-low rounded-lg p-fluid-xl flex flex-col items-center gap-static-md text-center">
                 <PIcon name={isFailed ? "warning" : "document"} size="large" color="contrast-medium" />
@@ -211,19 +211,22 @@ export default function CandidateSourcesReviewPage() {
               </div>
             ) : candidates.map((candidate) => (
               <div key={candidate.id} className="bg-surface border border-contrast-low rounded-lg p-fluid-sm">
-                <div className="flex items-start justify-between gap-static-md">
+                <div className="flex flex-col gap-static-md lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-static-xs flex-wrap mb-static-xs">
                       <PTag color={REVIEW_COLORS[candidate.review_status]}>{candidate.review_status}</PTag>
                       <PTag color="background-frosted">{candidate.classification}</PTag>
                       <PTag color="notification-info-soft">{Math.round(candidate.total_score * 100)} score</PTag>
+                      {candidate.semantic_support !== undefined && candidate.semantic_support !== null && (
+                        <PTag color="notification-info-soft">{Math.round(candidate.semantic_support * 100)} semantic</PTag>
+                      )}
                     </div>
                     <PHeading size="small">{candidate.title}</PHeading>
                     {candidate.url && (
                       <PText size="small" className="text-contrast-low truncate mt-static-xs">{candidate.url}</PText>
                     )}
                   </div>
-                  <div className="flex gap-static-xs shrink-0">
+                  <div className="flex flex-wrap gap-static-xs shrink-0">
                     <PButton
                       variant={candidate.review_status === "accepted" ? "primary" : "secondary"}
                       loading={updatingId === candidate.id}
@@ -244,7 +247,7 @@ export default function CandidateSourcesReviewPage() {
                 </div>
 
                 {candidate.review_status === "accepted" && (
-                  <div className="mt-static-sm bg-canvas rounded p-static-sm flex items-end gap-static-sm">
+                  <div className="mt-static-sm bg-canvas rounded p-static-sm flex flex-col gap-static-sm lg:flex-row lg:items-end">
                     <label className="flex flex-col gap-static-xs flex-1">
                       <PText size="small" weight="semi-bold">Save to Library</PText>
                       <select
@@ -275,7 +278,28 @@ export default function CandidateSourcesReviewPage() {
 
                 <PText size="small" className="text-contrast-medium mt-static-sm line-clamp-3">{candidate.excerpt}</PText>
 
-                <div className="grid grid-cols-6 gap-static-xs mt-static-sm">
+                {Boolean(candidate.matched_fragments?.length) && (
+                  <div className="mt-static-sm flex flex-col gap-static-xs">
+                    {candidate.matched_fragments?.slice(0, 2).map((fragment) => (
+                      <div key={fragment.id} className="bg-canvas rounded p-static-xs">
+                        <PText size="x-small" className="text-contrast-medium">
+                          {Math.round(fragment.similarity * 100)} match · fragment {fragment.fragment_index + 1}
+                        </PText>
+                        <PText size="small" className="text-contrast-medium line-clamp-2">{fragment.text}</PText>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {Boolean(candidate.ranking_reasons?.length) && (
+                  <div className="flex gap-static-xs flex-wrap mt-static-sm">
+                    {candidate.ranking_reasons?.slice(0, 4).map((reason) => (
+                      <PTag key={`${candidate.id}-${reason.key}`} color="background-frosted">{reason.label}: {reason.value}</PTag>
+                    ))}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-static-xs mt-static-sm sm:grid-cols-3 2xl:grid-cols-6">
                   {Object.entries(candidate.scores).map(([key, value]) => (
                     <div key={key} className="bg-canvas rounded p-static-xs">
                       <PText size="x-small" className="text-contrast-medium">{key.replace("_", " ")}</PText>
@@ -285,7 +309,7 @@ export default function CandidateSourcesReviewPage() {
                 </div>
 
                 {(candidate.claim_previews.length > 0 || candidate.stakeholder_previews.length > 0) && (
-                  <div className="grid grid-cols-2 gap-static-sm mt-static-sm">
+                  <div className="grid grid-cols-1 gap-static-sm mt-static-sm lg:grid-cols-2">
                     <div>
                       <PText size="small" weight="semi-bold" className="mb-static-xs">Claims</PText>
                       <div className="flex flex-col gap-static-xs">
@@ -308,10 +332,10 @@ export default function CandidateSourcesReviewPage() {
             ))}
           </div>
 
-          <div className="col-span-2">
-            <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md sticky top-fluid-md flex flex-col gap-fluid-sm">
+          <div className="xl:col-span-2">
+            <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md flex flex-col gap-fluid-sm xl:sticky xl:top-fluid-md">
               <PHeading size="small">Review Summary</PHeading>
-              <div className="grid grid-cols-3 gap-static-xs">
+              <div className="grid grid-cols-1 gap-static-xs sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
                 <div className="bg-canvas rounded p-static-sm text-center">
                   <PText size="small" weight="semi-bold">{candidates.length}</PText>
                   <PText size="x-small" className="text-contrast-medium">Total</PText>

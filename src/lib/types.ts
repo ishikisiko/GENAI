@@ -97,8 +97,37 @@ export interface SourceRegistryAssignmentSummary {
   status: string;
 }
 
+export interface SourceMatchedFragment {
+  id: string;
+  source_scope: "global" | "candidate";
+  source_id: string;
+  fragment_index: number;
+  text: string;
+  similarity: number;
+  content_hash: string;
+}
+
+export interface SourceRankingReason {
+  key: string;
+  label: string;
+  value: string;
+  score: number | null;
+}
+
+export interface SemanticRecallStatus {
+  applied: boolean;
+  reason: string | null;
+  query: string | null;
+  indexed_fragment_count: number;
+  matched_fragment_count: number;
+}
+
 export interface SourceRegistrySource {
   id: string;
+  source_scope?: "global" | "candidate";
+  global_source_id?: string | null;
+  candidate_id?: string | null;
+  candidate_review_status?: CandidateReviewStatus | string | null;
   title: string;
   content: string;
   doc_type: DocType;
@@ -115,6 +144,10 @@ export interface SourceRegistrySource {
   usage_count: number;
   duplicate_candidate: boolean;
   already_in_case: boolean;
+  semantic_support?: number | null;
+  final_score?: number | null;
+  matched_fragments?: SourceMatchedFragment[];
+  ranking_reasons?: SourceRankingReason[];
 }
 
 export interface SourceRegistryListResponse {
@@ -153,6 +186,7 @@ export interface CaseSourceSelectionResponse {
   case_id: string;
   case_topics: CaseSourceTopic[];
   sections: CaseSourceSelectionSection[];
+  semantic_recall?: SemanticRecallStatus;
 }
 
 export interface SourceDocumentSnapshotResponse {
@@ -371,6 +405,9 @@ export interface SourceCandidate {
   duplicate_of: string | null;
   created_at: string;
   updated_at: string;
+  semantic_support?: number | null;
+  matched_fragments?: SourceMatchedFragment[];
+  ranking_reasons?: SourceRankingReason[];
 }
 
 export interface SourceDiscoveryJobResponse {
@@ -500,6 +537,7 @@ export interface Database {
       source_topics: { Row: SourceTopic; Insert: Partial<SourceTopic>; Update: Partial<SourceTopic> };
       case_source_topics: { Row: CaseSourceTopic; Insert: Partial<CaseSourceTopic>; Update: Partial<CaseSourceTopic> };
       source_topic_assignments: { Row: SourceTopicAssignment; Insert: Partial<SourceTopicAssignment>; Update: Partial<SourceTopicAssignment> };
+      source_fragments: { Row: SourceMatchedFragment; Insert: Partial<SourceMatchedFragment>; Update: Partial<SourceMatchedFragment> };
       source_discovery_jobs: { Row: SourceDiscoveryJobResponse; Insert: Partial<SourceDiscoveryJobResponse>; Update: Partial<SourceDiscoveryJobResponse> };
       source_candidates: { Row: SourceCandidate; Insert: Partial<SourceCandidate>; Update: Partial<SourceCandidate> };
       evidence_packs: { Row: EvidencePack; Insert: Partial<EvidencePack>; Update: Partial<EvidencePack> };

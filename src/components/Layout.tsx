@@ -32,7 +32,7 @@ function CaseNav({ caseId }: { caseId: string }) {
       <PText size="small" className="text-contrast-medium uppercase tracking-widest px-static-sm mb-static-xs" style={{ fontSize: "10px" }}>
         Case Steps
       </PText>
-      <div className="flex flex-col gap-static-xs mt-static-xs">
+      <div className="flex flex-wrap gap-static-xs mt-static-xs lg:flex-col">
         {items.map((item) => {
           const active = location.pathname === item.href || (
             item.href.endsWith("/source-discovery") && (
@@ -67,8 +67,8 @@ export default function Layout({ children }: { children: ReactNode }) {
   const { caseId } = useParams<{ caseId: string }>();
 
   return (
-    <div className="min-h-screen bg-canvas flex">
-      <aside className="w-56 shrink-0 border-r border-contrast-low bg-surface flex flex-col">
+    <div className="min-h-screen bg-canvas flex flex-col lg:flex-row">
+      <aside className="w-full shrink-0 border-b border-contrast-low bg-surface flex flex-col lg:w-56 lg:border-b-0 lg:border-r">
         <div className="p-fluid-sm border-b border-contrast-low">
           <div className="flex items-center gap-static-sm">
             <div className="w-8 h-8 bg-primary rounded flex items-center justify-center" style={{ color: "white" }}>
@@ -86,7 +86,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="flex-1 p-fluid-sm">
-          <div className="flex flex-col gap-static-xs">
+          <div className="flex flex-wrap gap-static-xs lg:flex-col">
             {globalNav.map((item) => {
               const active = item.exact
                 ? location.pathname === item.href
@@ -118,14 +118,14 @@ export default function Layout({ children }: { children: ReactNode }) {
           )}
         </nav>
 
-        <div className="p-fluid-sm border-t border-contrast-low">
+        <div className="hidden p-fluid-sm border-t border-contrast-low lg:block">
           <PText size="small" className="text-contrast-low text-center" style={{ fontSize: "11px" }}>
             MVP v1.0
           </PText>
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 min-w-0 overflow-auto">
         {children}
       </main>
     </div>

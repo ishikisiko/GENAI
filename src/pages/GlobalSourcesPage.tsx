@@ -235,7 +235,7 @@ export default function GlobalSourcesPage() {
         )}
       />
 
-      <div className="p-fluid-lg max-w-7xl flex flex-col gap-fluid-md">
+      <div className="p-fluid-lg w-full flex flex-col gap-fluid-md">
         {error && (
           <PInlineNotification heading="Error" description={error} state="error" dismissButton onDismiss={() => setError("")} />
         )}
@@ -244,8 +244,8 @@ export default function GlobalSourcesPage() {
         )}
 
         {showTopicForm && (
-          <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md grid grid-cols-5 gap-static-sm items-end">
-            <label className="flex flex-col gap-static-xs col-span-2">
+          <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md grid grid-cols-1 gap-static-sm items-end md:grid-cols-2 xl:grid-cols-5">
+            <label className="flex flex-col gap-static-xs md:col-span-2">
               <PText size="small" weight="semi-bold">Topic Name</PText>
               <input
                 value={topicName}
@@ -274,11 +274,11 @@ export default function GlobalSourcesPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-6 gap-fluid-md items-start">
-          <aside className="col-span-1 bg-surface border border-contrast-low rounded-lg p-static-sm flex flex-col gap-static-md">
+        <div className="grid grid-cols-1 gap-fluid-md items-start xl:grid-cols-6">
+          <aside className="bg-surface border border-contrast-low rounded-lg p-static-sm flex flex-col gap-static-md xl:col-span-1">
             <div>
               <PText size="small" weight="semi-bold" className="mb-static-xs">Smart Views</PText>
-              <div className="flex flex-col gap-static-xs">
+              <div className="flex flex-wrap gap-static-xs xl:flex-col">
                 <button
                   className={`text-left rounded px-static-sm py-static-xs ${viewKey(view) === "all" ? "bg-primary text-[white]" : "hover:bg-canvas"}`}
                   onClick={() => setView({ type: "all" })}
@@ -300,7 +300,7 @@ export default function GlobalSourcesPage() {
 
             <div>
               <PText size="small" weight="semi-bold" className="mb-static-xs">Topics</PText>
-              <div className="flex flex-col gap-static-xs max-h-[420px] overflow-auto pr-static-xs">
+              <div className="flex flex-wrap gap-static-xs max-h-[420px] overflow-auto pr-static-xs xl:flex-col">
                 {topics.map((topic) => (
                   <button
                     key={topic.id}
@@ -315,9 +315,9 @@ export default function GlobalSourcesPage() {
             </div>
           </aside>
 
-          <section className="col-span-3 bg-surface border border-contrast-low rounded-lg overflow-hidden">
-            <div className="p-fluid-md border-b border-contrast-low grid grid-cols-5 gap-static-sm">
-              <label className="flex flex-col gap-static-xs col-span-5">
+          <section className="bg-surface border border-contrast-low rounded-lg overflow-hidden xl:col-span-3">
+            <div className="p-fluid-md border-b border-contrast-low grid grid-cols-1 gap-static-sm sm:grid-cols-2 2xl:grid-cols-5">
+              <label className="flex flex-col gap-static-xs sm:col-span-2 2xl:col-span-5">
                 <PText size="small" weight="semi-bold">Search Registry</PText>
                 <input
                   value={query}
@@ -388,7 +388,7 @@ export default function GlobalSourcesPage() {
             )}
           </section>
 
-          <aside className="col-span-2 bg-surface border border-contrast-low rounded-lg p-fluid-md sticky top-fluid-md">
+          <aside className="bg-surface border border-contrast-low rounded-lg p-fluid-md xl:col-span-2 xl:sticky xl:top-fluid-md">
             {!selectedSource ? (
               <div className="flex flex-col items-center gap-static-sm text-center p-fluid-md">
                 <PIcon name="document" size="large" color="contrast-medium" />
@@ -401,7 +401,7 @@ export default function GlobalSourcesPage() {
                   <PText size="small" className="text-contrast-medium mt-static-xs line-clamp-5">{selectedSource.content}</PText>
                 </div>
 
-                <div className="grid grid-cols-3 gap-static-xs">
+                <div className="grid grid-cols-1 gap-static-xs sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
                   <div className="bg-canvas rounded p-static-xs text-center">
                     <PText size="small" weight="semi-bold">{selectedSource.usage_count}</PText>
                     <PText size="x-small" className="text-contrast-medium">Uses</PText>
@@ -418,7 +418,7 @@ export default function GlobalSourcesPage() {
 
                 <div>
                   <PText size="small" weight="semi-bold" className="mb-static-xs">Assign to Topic</PText>
-                  <div className="flex gap-static-xs">
+                  <div className="flex flex-col gap-static-xs sm:flex-row">
                     <select
                       value={assignTopicId}
                       onChange={(event) => setAssignTopicId(event.target.value)}

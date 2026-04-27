@@ -273,6 +273,35 @@ class SourceTopicAssignmentRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class SourceFragmentRecord(Base):
+    __tablename__ = "source_fragments"
+
+    id: Mapped[str] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    source_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    global_source_id: Mapped[str | None] = mapped_column(
+        Uuid,
+        ForeignKey("global_source_documents.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    source_candidate_id: Mapped[str | None] = mapped_column(
+        Uuid,
+        ForeignKey("source_candidates.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    fragment_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    fragment_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(128), nullable=False, default="local-token-hash")
+    embedding_version: Mapped[str] = mapped_column(String(64), nullable=False, default="v1")
+    embedding_vector: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    vector_index_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    index_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    last_indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class AgentProfileRecord(Base):
     __tablename__ = "agent_profiles"
 

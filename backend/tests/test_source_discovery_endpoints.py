@@ -267,7 +267,49 @@ class _FakeSourceLibraryService:
                     "outcome": "completed",
                     "case_id": case_id,
                     "case_topics": [],
-                    "sections": [{"key": "recommended", "sources": []}],
+                    "semantic_recall": {
+                        "applied": True,
+                        "reason": None,
+                        "query": query or "Recall case",
+                        "indexed_fragment_count": 3,
+                        "matched_fragment_count": 1,
+                    },
+                    "sections": [
+                        {
+                            "key": "recommended",
+                            "sources": [
+                                {
+                                    "id": "source-1",
+                                    "source_scope": "global",
+                                    "global_source_id": "source-1",
+                                    "candidate_id": None,
+                                    "candidate_review_status": None,
+                                    "title": "Official source",
+                                    "semantic_support": 0.82,
+                                    "matched_fragments": [
+                                        {
+                                            "id": "fragment-1",
+                                            "source_scope": "global",
+                                            "source_id": "source-1",
+                                            "fragment_index": 0,
+                                            "text": "Recall evidence",
+                                            "similarity": 0.82,
+                                            "content_hash": "hash",
+                                        }
+                                    ],
+                                    "ranking_reasons": [
+                                        {
+                                            "key": "semantic_support",
+                                            "label": "Semantic support",
+                                            "value": "82 match",
+                                            "score": 0.82,
+                                        }
+                                    ],
+                                    "already_in_case": False,
+                                }
+                            ],
+                        }
+                    ],
                 }
 
         return _Response()
@@ -409,6 +451,19 @@ def test_source_library_topic_and_registry_endpoints_are_wired():
     assert assignment["topic_id"] == "topic-1"
     assert selection["sections"][0]["key"] == "recommended"
     assert attached["global_source_id"] == "source-1"
+
+
+def test_source_selection_endpoint_returns_semantic_recommendation_contract():
+    selection_endpoint = _get_endpoint(_build_app(), "/api/cases/{case_id}/source-selection", "GET")
+
+    selection = asyncio.run(selection_endpoint("case-123", query="battery recall"))
+    source = selection["sections"][0]["sources"][0]
+
+    assert selection["semantic_recall"]["applied"] is True
+    assert source["source_scope"] == "global"
+    assert source["semantic_support"] == 0.82
+    assert source["matched_fragments"][0]["text"] == "Recall evidence"
+    assert source["ranking_reasons"][0]["key"] == "semantic_support"
 
 
 def test_source_candidate_save_to_library_endpoint_is_explicit():

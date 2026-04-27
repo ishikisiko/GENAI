@@ -210,7 +210,7 @@ export default function GroundingPage() {
         action={crisisCase && <StatusBadge status={crisisCase.status} />}
       />
 
-      <div className="p-fluid-lg max-w-5xl">
+      <div className="p-fluid-lg w-full">
         {error && (
           <PInlineNotification heading="Error" description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
         )}
@@ -225,9 +225,9 @@ export default function GroundingPage() {
             </PButton>
           </div>
         ) : (
-          <div className="grid grid-cols-4 gap-fluid-md">
-            <div className="col-span-3 flex flex-col gap-fluid-md">
-              <div className="flex gap-static-sm">
+          <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-4">
+            <div className="flex flex-col gap-fluid-md xl:col-span-3">
+              <div className="flex flex-wrap gap-static-sm">
                 {tabs.map((tab) => (
                   <button
                     key={tab.key}
@@ -250,7 +250,7 @@ export default function GroundingPage() {
 
               <div className="flex flex-col gap-static-sm">
                 {activeTab === "entities" && entities.map((e) => (
-                  <div key={e.id} className="bg-surface border border-contrast-low rounded-lg p-fluid-sm flex gap-static-md items-start">
+                  <div key={e.id} className="bg-surface border border-contrast-low rounded-lg p-fluid-sm flex flex-col gap-static-sm sm:flex-row sm:items-start sm:gap-static-md">
                     <PTag color={ENTITY_TYPE_COLORS[e.entity_type]}>{e.entity_type}</PTag>
                     <div className="flex-1">
                       <PText size="small" weight="semi-bold">{e.name}</PText>
@@ -283,8 +283,8 @@ export default function GroundingPage() {
                 )}
 
                 {activeTab === "claims" && claims.map((c) => (
-                  <div key={c.id} className="bg-surface border border-contrast-low rounded-lg p-fluid-sm flex gap-static-md items-start">
-                    <div className="flex flex-col gap-static-xs shrink-0">
+                  <div key={c.id} className="bg-surface border border-contrast-low rounded-lg p-fluid-sm flex flex-col gap-static-sm sm:flex-row sm:items-start sm:gap-static-md">
+                    <div className="flex flex-wrap gap-static-xs shrink-0 sm:flex-col">
                       <PTag color={CLAIM_TYPE_COLORS[c.claim_type]}>{c.claim_type}</PTag>
                       <PTag color={CREDIBILITY_COLORS[c.credibility]}>{c.credibility}</PTag>
                     </div>
@@ -294,10 +294,10 @@ export default function GroundingPage() {
               </div>
             </div>
 
-            <div className="col-span-1">
-              <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md sticky top-fluid-md flex flex-col gap-fluid-sm">
+            <div className="xl:col-span-1">
+              <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md flex flex-col gap-fluid-sm xl:sticky xl:top-fluid-md">
                 <PHeading size="small">Graph Summary</PHeading>
-                <div className="flex flex-col gap-static-sm">
+                <div className="grid grid-cols-1 gap-static-sm sm:grid-cols-3 xl:grid-cols-1">
                   {summaryStats.map((s) => (
                     <div key={s.label} className="flex items-center justify-between bg-canvas rounded p-static-sm">
                       <div className="flex items-center gap-static-xs">

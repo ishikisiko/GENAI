@@ -102,7 +102,7 @@ export default function SourceDiscoverySetupPage() {
         action={crisisCase && <StatusBadge status={crisisCase.status} />}
       />
 
-      <div className="p-fluid-lg max-w-4xl">
+      <div className="p-fluid-lg w-full">
         {error && (
           <PInlineNotification
             heading="Error"
@@ -122,8 +122,8 @@ export default function SourceDiscoverySetupPage() {
             </PText>
           </div>
 
-          <div className="grid grid-cols-2 gap-fluid-md">
-            <label className="flex flex-col gap-static-xs col-span-2">
+          <div className="grid grid-cols-1 gap-fluid-md lg:grid-cols-2">
+            <label className="flex flex-col gap-static-xs lg:col-span-2">
               <PText size="small" weight="semi-bold">Topic *</PText>
               <input
                 value={topic}
@@ -133,7 +133,7 @@ export default function SourceDiscoverySetupPage() {
               />
             </label>
 
-            <label className="flex flex-col gap-static-xs col-span-2">
+            <label className="flex flex-col gap-static-xs lg:col-span-2">
               <PText size="small" weight="semi-bold">Description</PText>
               <textarea
                 value={description}
@@ -217,7 +217,7 @@ export default function SourceDiscoverySetupPage() {
             </div>
           </div>
 
-          <div className="border-t border-contrast-low pt-fluid-sm flex gap-static-sm">
+          <div className="border-t border-contrast-low pt-fluid-sm flex flex-wrap gap-static-sm">
             <PButton loading={submitting} disabled={submitting || !topic.trim()} icon="arrow-right" onClick={submit}>
               Create Discovery Job
             </PButton>

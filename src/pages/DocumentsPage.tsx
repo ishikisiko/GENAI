@@ -67,6 +67,7 @@ export default function DocumentsPage() {
   const [success, setSuccess] = useState("");
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [query, setQuery] = useState("");
+  const [collapsedSourceSections, setCollapsedSourceSections] = useState<Record<string, boolean>>({});
   const [selectedGlobalSourceIds, setSelectedGlobalSourceIds] = useState<string[]>([]);
 
   const [docTitle, setDocTitle] = useState("");
@@ -250,7 +251,10 @@ export default function DocumentsPage() {
 
   async function addSelectedFromGlobalLibrary() {
     const selectedSources = allSelectionSources().filter((source) =>
-      selectedGlobalSourceIds.includes(source.id) && !linkedGlobalSourceIds.has(source.id) && !source.already_in_case
+      selectedGlobalSourceIds.includes(source.id)
+      && (source.source_scope || "global") === "global"
+      && !linkedGlobalSourceIds.has(source.global_source_id || source.id)
+      && !source.already_in_case
     );
 
     if (selectedSources.length === 0) {
@@ -267,7 +271,7 @@ export default function DocumentsPage() {
         selectedSources.map((source) =>
           attachGlobalSourceToCase({
             case_id: caseId!,
-            global_source_id: source.id,
+            global_source_id: source.global_source_id || source.id,
             topic_id: source.topic_assignments[0]?.topic_id || null,
             assignment_id: source.topic_assignments[0]?.assignment_id || null,
           })
@@ -291,6 +295,13 @@ export default function DocumentsPage() {
         ? current.filter((id) => id !== sourceId)
         : [...current, sourceId]
     );
+  }
+
+  function toggleSourceSection(sectionKey: string) {
+    setCollapsedSourceSections((current) => ({
+      ...current,
+      [sectionKey]: !current[sectionKey],
+    }));
   }
 
   async function deleteDocument(id: string) {
@@ -370,7 +381,7 @@ export default function DocumentsPage() {
         action={crisisCase && <StatusBadge status={crisisCase.status} />}
       />
 
-      <div className="p-fluid-lg max-w-6xl">
+      <div className="p-fluid-lg w-full">
         {error && (
           <PInlineNotification heading="Error" description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
         )}
@@ -378,10 +389,10 @@ export default function DocumentsPage() {
           <PInlineNotification heading="Success" description={success} state="success" dismissButton className="mb-fluid-md" onDismiss={() => setSuccess("")} />
         )}
 
-        <div className="grid grid-cols-5 gap-fluid-md">
-          <div className="col-span-3 flex flex-col gap-fluid-md">
+        <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-5">
+          <div className="flex flex-col gap-fluid-md xl:col-span-3">
             <div className="bg-surface border border-contrast-low rounded-lg overflow-hidden">
-              <div className="px-fluid-md py-static-md border-b border-contrast-low flex items-center justify-between">
+              <div className="px-fluid-md py-static-md border-b border-contrast-low flex flex-col gap-static-sm lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <PHeading size="small">Case Documents</PHeading>
                   <PText size="small" className="text-contrast-medium">
@@ -487,14 +498,14 @@ export default function DocumentsPage() {
             </div>
 
             <div className="bg-surface border border-contrast-low rounded-lg overflow-hidden">
-              <div className="px-fluid-md py-static-md border-b border-contrast-low flex items-center justify-between">
+              <div className="px-fluid-md py-static-md border-b border-contrast-low flex flex-col gap-static-sm lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <PHeading size="small">Add from Source Registry</PHeading>
                   <PText size="small" className="text-contrast-medium">
                     Start with recommended and same-topic sources, then search globally when needed.
                   </PText>
                 </div>
-                <div className="flex items-center gap-static-sm">
+                <div className="flex flex-wrap items-center gap-static-sm">
                   <PButton
                     loading={addingGlobalSources}
                     disabled={addingGlobalSources || selectedGlobalSourceIds.length === 0}
@@ -522,6 +533,13 @@ export default function DocumentsPage() {
                     ? `${selectedVisibleCount} selected in current results.`
                     : "Recommended, same-topic, related, and global search sources stay separated."}
                 </PText>
+                {sourceSelection?.semantic_recall && (
+                  <PText size="small" className="text-contrast-medium mt-static-xs">
+                    {sourceSelection.semantic_recall.applied
+                      ? `${sourceSelection.semantic_recall.matched_fragment_count} semantic fragment matches available.`
+                      : `Semantic recall unavailable: ${sourceSelection.semantic_recall.reason || "fallback ranking in use"}.`}
+                  </PText>
+                )}
               </div>
 
               {(sourceSelection?.sections || []).length === 0 ? (
@@ -533,76 +551,136 @@ export default function DocumentsPage() {
                 </div>
               ) : (
                 <div className="divide-y divide-contrast-low">
-                  {(sourceSelection?.sections || []).map((section) => (
-                    <div key={section.key}>
-                      <div className="px-fluid-md py-static-sm bg-canvas border-b border-contrast-low flex items-center justify-between">
-                        <div>
-                          <PText size="small" weight="semi-bold">{section.title}</PText>
-                          <PText size="x-small" className="text-contrast-medium">{section.description}</PText>
-                        </div>
-                        <PTag color="background-frosted">{section.sources.length}</PTag>
-                      </div>
-                      {section.key === "manual_upload" ? (
-                        <div className="p-fluid-sm flex items-center justify-between gap-static-sm">
-                          <PText size="small" className="text-contrast-medium">Paste a new case document when registry sources do not fit.</PText>
-                          <PButton variant="secondary" icon="add" onClick={() => setShowUploadForm(true)}>
-                            Manual Upload
-                          </PButton>
-                        </div>
-                      ) : section.sources.length === 0 ? (
-                        <div className="p-fluid-sm">
-                          <PText size="small" className="text-contrast-medium">No sources in this section.</PText>
-                        </div>
-                      ) : section.sources.map((source) => {
-                        const alreadyLinked = linkedGlobalSourceIds.has(source.id) || source.already_in_case;
-                        const isSelected = selectedGlobalSourceIds.includes(source.id);
-                        return (
-                          <div key={`${section.key}-${source.id}`} className="p-fluid-sm flex gap-static-md items-start">
-                            <div className="pt-static-xs w-4 shrink-0">
-                              {!alreadyLinked && (
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  disabled={addingGlobalSources}
-                                  onChange={() => toggleGlobalSourceSelection(source.id)}
-                                  className="h-4 w-4 accent-[var(--p-color-state-success)] cursor-pointer disabled:cursor-not-allowed"
-                                />
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-static-sm mb-static-xs flex-wrap">
-                                <PTag color="background-frosted">{source.source_kind}</PTag>
-                                <PTag color={source.authority_level === "high" ? "notification-success-soft" : "background-frosted"}>{source.authority_level}</PTag>
-                                {alreadyLinked && <PTag color="notification-success-soft">Already in Case</PTag>}
-                                {!alreadyLinked && isSelected && <PTag color="background-frosted">Selected</PTag>}
-                                {source.duplicate_candidate && <PTag color="notification-warning-soft">Duplicate</PTag>}
-                                <PText size="small" className="text-contrast-low">
-                                  {new Date(source.created_at).toLocaleString()}
-                                </PText>
-                              </div>
-                              <PText size="small" weight="semi-bold" className="mb-static-xs">{source.title}</PText>
-                              <PText size="small" className="text-contrast-medium line-clamp-4">
-                                {source.content}
-                              </PText>
-                              <div className="flex gap-static-xs flex-wrap mt-static-xs">
-                                {source.topic_assignments.slice(0, 3).map((assignment) => (
-                                  <PTag key={assignment.assignment_id} color="background-frosted">{assignment.topic_name}</PTag>
-                                ))}
-                                {source.usage_count > 0 && <PTag color="notification-info-soft">{source.usage_count} uses</PTag>}
-                              </div>
-                            </div>
+                  {(sourceSelection?.sections || []).map((section) => {
+                    const isCollapsed = Boolean(collapsedSourceSections[section.key]);
+                    return (
+                      <div key={section.key}>
+                        <button
+                          type="button"
+                          className="w-full px-fluid-md py-static-sm bg-canvas border-b border-contrast-low flex flex-col gap-static-xs text-left transition-colors hover:bg-surface sm:flex-row sm:items-center sm:justify-between"
+                          aria-expanded={!isCollapsed}
+                          onClick={() => toggleSourceSection(section.key)}
+                          style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif" }}
+                        >
+                          <div>
+                            <PText size="small" weight="semi-bold">{section.title}</PText>
+                            <PText size="x-small" className="text-contrast-medium">{section.description}</PText>
                           </div>
-                        );
-                      })}
-                    </div>
-                  ))}
+                          <div className="flex items-center gap-static-xs">
+                            <PTag color="background-frosted">{section.sources.length}</PTag>
+                            <PIcon name={isCollapsed ? "arrow-head-down" : "arrow-head-up"} size="small" color="contrast-medium" />
+                          </div>
+                        </button>
+
+                        {!isCollapsed && (
+                          section.key === "manual_upload" ? (
+                            <div className="p-fluid-sm flex flex-col gap-static-sm sm:flex-row sm:items-center sm:justify-between">
+                              <PText size="small" className="text-contrast-medium">Paste a new case document when registry sources do not fit.</PText>
+                              <PButton variant="secondary" icon="add" onClick={() => setShowUploadForm(true)}>
+                                Manual Upload
+                              </PButton>
+                            </div>
+                          ) : section.sources.length === 0 ? (
+                            <div className="p-fluid-sm">
+                              <PText size="small" className="text-contrast-medium">No sources in this section.</PText>
+                            </div>
+                          ) : section.sources.map((source) => {
+                            const sourceScope = source.source_scope || "global";
+                            const sourceGlobalId = source.global_source_id || source.id;
+                            const alreadyLinked = sourceScope === "global"
+                              && (linkedGlobalSourceIds.has(sourceGlobalId) || source.already_in_case);
+                            const isCandidate = sourceScope === "candidate";
+                            const isSelected = selectedGlobalSourceIds.includes(source.id);
+                            const canSelect = !isCandidate && !alreadyLinked;
+                            const matchedFragments = source.matched_fragments || [];
+                            const rankingReasons = source.ranking_reasons || [];
+                            const discoveryJobId =
+                              typeof source.source_metadata.discovery_job_id === "string"
+                                ? source.source_metadata.discovery_job_id
+                                : "";
+                            return (
+                              <div key={`${section.key}-${sourceScope}-${source.id}`} className="p-fluid-sm flex gap-static-md items-start">
+                                <div className="pt-static-xs w-4 shrink-0">
+                                  {canSelect && (
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      disabled={addingGlobalSources}
+                                      onChange={() => toggleGlobalSourceSelection(source.id)}
+                                      className="h-4 w-4 accent-[var(--p-color-state-success)] cursor-pointer disabled:cursor-not-allowed"
+                                    />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-static-sm mb-static-xs flex-wrap">
+                                    {isCandidate && <PTag color="notification-warning-soft">Candidate</PTag>}
+                                    <PTag color="background-frosted">{source.source_kind}</PTag>
+                                    <PTag color={source.authority_level === "high" ? "notification-success-soft" : "background-frosted"}>{source.authority_level}</PTag>
+                                    {alreadyLinked && <PTag color="notification-success-soft">Already in Case</PTag>}
+                                    {!alreadyLinked && isSelected && <PTag color="background-frosted">Selected</PTag>}
+                                    {source.semantic_support !== undefined && source.semantic_support !== null && (
+                                      <PTag color="notification-info-soft">{Math.round(source.semantic_support * 100)} semantic</PTag>
+                                    )}
+                                    {source.candidate_review_status && (
+                                      <PTag color="background-frosted">{source.candidate_review_status}</PTag>
+                                    )}
+                                    {source.duplicate_candidate && <PTag color="notification-warning-soft">Duplicate</PTag>}
+                                    <PText size="small" className="text-contrast-low">
+                                      {new Date(source.created_at).toLocaleString()}
+                                    </PText>
+                                  </div>
+                                  <PText size="small" weight="semi-bold" className="mb-static-xs">{source.title}</PText>
+                                  <PText size="small" className="text-contrast-medium line-clamp-4">
+                                    {source.content}
+                                  </PText>
+                                  {matchedFragments.length > 0 && (
+                                    <div className="mt-static-sm flex flex-col gap-static-xs">
+                                      {matchedFragments.slice(0, 2).map((fragment) => (
+                                        <div key={fragment.id} className="bg-canvas rounded p-static-xs">
+                                          <PText size="x-small" className="text-contrast-medium">
+                                            {Math.round(fragment.similarity * 100)} match · fragment {fragment.fragment_index + 1}
+                                          </PText>
+                                          <PText size="small" className="text-contrast-medium line-clamp-2">
+                                            {fragment.text}
+                                          </PText>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <div className="flex gap-static-xs flex-wrap mt-static-xs">
+                                    {source.topic_assignments.slice(0, 3).map((assignment) => (
+                                      <PTag key={assignment.assignment_id} color="background-frosted">{assignment.topic_name}</PTag>
+                                    ))}
+                                    {source.usage_count > 0 && <PTag color="notification-info-soft">{source.usage_count} uses</PTag>}
+                                    {rankingReasons.slice(0, 4).map((reason) => (
+                                      <PTag key={`${source.id}-${reason.key}`} color="background-frosted">{reason.label}: {reason.value}</PTag>
+                                    ))}
+                                  </div>
+                                  {isCandidate && discoveryJobId && (
+                                    <div className="mt-static-sm">
+                                      <PButtonPure
+                                        icon="arrow-right"
+                                        onClick={() => navigate(`/cases/${caseId}/source-discovery/${discoveryJobId}/review`)}
+                                      >
+                                        Open Review
+                                      </PButtonPure>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
           </div>
 
-          <div className="col-span-2">
-            <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md sticky top-fluid-md">
+          <div className="xl:col-span-2">
+            <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md xl:sticky xl:top-fluid-md">
               <PHeading size="small" className="mb-fluid-sm">Document Flow Guide</PHeading>
               <div className="flex flex-col gap-static-md mb-fluid-md">
                 {DOC_TYPES.map((type) => (

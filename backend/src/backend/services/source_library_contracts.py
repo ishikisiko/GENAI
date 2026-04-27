@@ -113,8 +113,37 @@ class SourceRegistryAssignmentSummary(BaseModel):
     status: str
 
 
+class SourceMatchedFragmentResponse(BaseModel):
+    id: str
+    source_scope: Literal["global", "candidate"]
+    source_id: str
+    fragment_index: int
+    text: str
+    similarity: float
+    content_hash: str
+
+
+class SourceRankingReasonResponse(BaseModel):
+    key: str
+    label: str
+    value: str
+    score: float | None = None
+
+
+class SemanticRecallResponse(BaseModel):
+    applied: bool
+    reason: str | None = None
+    query: str | None = None
+    indexed_fragment_count: int = 0
+    matched_fragment_count: int = 0
+
+
 class SourceRegistrySourceResponse(BaseModel):
     id: str
+    source_scope: Literal["global", "candidate"] = "global"
+    global_source_id: str | None = None
+    candidate_id: str | None = None
+    candidate_review_status: str | None = None
     title: str
     content: str
     doc_type: str
@@ -131,6 +160,10 @@ class SourceRegistrySourceResponse(BaseModel):
     usage_count: int = 0
     duplicate_candidate: bool = False
     already_in_case: bool = False
+    semantic_support: float | None = None
+    final_score: float | None = None
+    matched_fragments: list[SourceMatchedFragmentResponse] = Field(default_factory=list)
+    ranking_reasons: list[SourceRankingReasonResponse] = Field(default_factory=list)
 
 
 class SourceRegistryListResponse(BaseModel):
@@ -169,6 +202,7 @@ class CaseSourceSelectionResponse(BaseModel):
     case_id: str
     case_topics: list[CaseSourceTopicResponse]
     sections: list[CaseSourceSelectionSection]
+    semantic_recall: SemanticRecallResponse = Field(default_factory=lambda: SemanticRecallResponse(applied=False))
 
 
 class AttachGlobalSourceRequest(BaseModel):

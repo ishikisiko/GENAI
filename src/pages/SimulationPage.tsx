@@ -332,11 +332,11 @@ export default function SimulationPage() {
             </PButton>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-[minmax(32rem,1.15fr)_minmax(0,1.35fr)] 2xl:grid-cols-[minmax(36rem,1.2fr)_minmax(0,1.3fr)]">
+          <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-[minmax(28rem,0.9fr)_minmax(0,1.55fr)] 2xl:grid-cols-[minmax(34rem,0.85fr)_minmax(0,1.75fr)]">
             <div className="flex flex-col gap-fluid-md">
               <div>
                 <PHeading size="small" className="mb-fluid-sm">Stakeholder Agents</PHeading>
-                <div className="grid grid-cols-1 gap-static-sm sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-static-sm md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                   {agents.map((a) => <AgentCard key={a.id} agent={a} />)}
                 </div>
               </div>
@@ -396,7 +396,7 @@ export default function SimulationPage() {
 
                 <div>
                   <PText size="small" weight="semi-bold" className="mb-static-xs">Strategy Type</PText>
-                  <div className="grid grid-cols-2 gap-static-xs">
+                  <div className="grid grid-cols-1 gap-static-xs sm:grid-cols-2">
                     {(["apology", "clarification", "compensation", "rebuttal"] as StrategyType[]).map((s) => (
                       <button
                         key={s}
@@ -530,8 +530,8 @@ export default function SimulationPage() {
                     const isTrackedActiveRun = run.id === activeRunId && runStatus;
                     return (
                       <div key={run.id} className="bg-surface border border-contrast-low rounded-lg overflow-hidden">
-                        <div className="flex items-center justify-between px-fluid-sm py-static-md border-b border-contrast-low">
-                          <div className="flex items-center gap-static-sm">
+                        <div className="flex flex-col gap-static-sm px-fluid-sm py-static-md border-b border-contrast-low lg:flex-row lg:items-center lg:justify-between">
+                          <div className="flex flex-wrap items-center gap-static-sm">
                             <PTag color={run.run_type === "baseline" ? "background-frosted" : "notification-warning-soft"}>
                               {run.run_type === "baseline" ? "Baseline" : "Intervention"}
                             </PTag>
@@ -542,7 +542,7 @@ export default function SimulationPage() {
                               <PText size="small" className="text-contrast-medium">@ Round {run.injection_round}</PText>
                             )}
                           </div>
-                          <div className="flex items-center gap-static-sm">
+                          <div className="flex flex-wrap items-center gap-static-sm">
                             <PTag color={run.status === "completed" ? "notification-success-soft" : run.status === "failed" ? "notification-error-soft" : "background-frosted"}>
                               {run.status}
                             </PTag>
@@ -577,8 +577,8 @@ export default function SimulationPage() {
                           <div className="divide-y divide-contrast-low">
                             {states.map((state) => (
                               <div key={state.id} className="p-fluid-sm">
-                                <div className="flex items-center justify-between mb-static-sm">
-                                  <div className="flex items-center gap-static-sm">
+                                <div className="flex flex-col gap-static-sm mb-static-sm lg:flex-row lg:items-center lg:justify-between">
+                                  <div className="flex flex-wrap items-center gap-static-sm">
                                     <PText size="small" weight="semi-bold" className="text-primary">
                                       Round {state.round_number}
                                     </PText>
@@ -586,7 +586,7 @@ export default function SimulationPage() {
                                       <PTag color="notification-warning-soft">{STRATEGY_LABELS[state.strategy_applied as StrategyType]} applied</PTag>
                                     )}
                                   </div>
-                                  <div className="flex items-center gap-static-sm w-32">
+                                  <div className="flex items-center gap-static-sm w-full sm:w-48 lg:w-32">
                                     <PText size="small" className="text-contrast-medium shrink-0" style={{ fontSize: "11px" }}>Sentiment</PText>
                                     <SentimentBar value={state.overall_sentiment} />
                                   </div>

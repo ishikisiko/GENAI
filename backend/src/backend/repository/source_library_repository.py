@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from urllib.parse import urlparse, urlunparse
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 
 from backend.db import Database
 from backend.domain.simulation_records import (
@@ -15,6 +15,7 @@ from backend.domain.simulation_records import (
     GlobalSourceDocumentRecord,
     SourceCandidateRecord,
     SourceDocumentRecord,
+    SourceFragmentRecord,
     SourceTopicAssignmentRecord,
     SourceTopicRecord,
 )
@@ -26,6 +27,14 @@ from backend.services.source_library_contracts import (
     SourceTopicUpdateRequest,
 )
 from backend.services.source_discovery_contracts import SourceCandidateLibrarySaveRequest
+from backend.services.semantic_source_recall import (
+    DEFAULT_FRAGMENT_PREVIEW_LIMIT,
+    EMBEDDING_MODEL,
+    EMBEDDING_VERSION,
+    LocalSemanticIndex,
+    aggregate_semantic_support,
+    chunk_source_text,
+)
 from backend.shared.errors import ApplicationError, ErrorCode
 
 
@@ -36,6 +45,47 @@ class SourceRegistryEntry:
     usage_count: int
     duplicate_candidate: bool
     already_in_case: bool = False
+
+
+@dataclass(frozen=True)
+class SourceFragmentMatch:
+    fragment: SourceFragmentRecord
+    source_scope: str
+    source_id: str
+    similarity: float
+
+
+@dataclass(frozen=True)
+class SourceRankingReason:
+    key: str
+    label: str
+    value: str
+    score: float | None = None
+
+
+@dataclass(frozen=True)
+class SourceSemanticRecommendationEntry:
+    source_scope: str
+    source: GlobalSourceDocumentRecord | None
+    candidate: SourceCandidateRecord | None
+    assignments: list[tuple[SourceTopicAssignmentRecord, SourceTopicRecord]]
+    usage_count: int
+    duplicate_candidate: bool
+    already_in_case: bool
+    semantic_support: float
+    final_score: float
+    matched_fragments: list[SourceFragmentMatch]
+    ranking_reasons: list[SourceRankingReason]
+
+
+@dataclass(frozen=True)
+class SourceSemanticRecallResult:
+    applied: bool
+    reason: str | None
+    query: str | None
+    indexed_fragment_count: int
+    matched_fragment_count: int
+    entries: list[SourceSemanticRecommendationEntry]
 
 
 @dataclass(frozen=True)
@@ -54,6 +104,7 @@ class CandidateLibrarySaveResult:
 class SourceLibraryRepository:
     def __init__(self, database: Database) -> None:
         self._database = database
+        self._semantic_index = LocalSemanticIndex()
 
     async def create_topic(self, request: SourceTopicCreateRequest) -> SourceTopicRecord:
         now = datetime.now(timezone.utc)
@@ -272,6 +323,212 @@ class SourceLibraryRepository:
                 entries.sort(key=lambda entry: entry.usage_count, reverse=True)
             return entries
 
+    async def refresh_global_source_fragments(self, global_source_id: str) -> list[SourceFragmentRecord]:
+        async with self._database.session() as session:
+            source = await self._require_global_source(session, global_source_id)
+            return await self._refresh_global_source_fragments(session, source)
+
+    async def refresh_candidate_source_fragments(self, candidate_id: str) -> list[SourceFragmentRecord]:
+        async with self._database.session() as session:
+            candidate = await session.get(SourceCandidateRecord, candidate_id)
+            if candidate is None:
+                raise ApplicationError(
+                    code=ErrorCode.NOT_FOUND,
+                    message=f"Source candidate not found: {candidate_id}",
+                    status_code=404,
+                )
+            return await self._refresh_candidate_source_fragments(session, candidate)
+
+    async def mark_source_fragments_stale(self, source_scope: str, source_id: str) -> int:
+        async with self._database.session() as session:
+            now = datetime.now(timezone.utc)
+            filters = self._fragment_source_filters(source_scope, source_id)
+            result = await session.execute(
+                update(SourceFragmentRecord)
+                .where(*filters)
+                .values(index_status="stale", updated_at=now, last_error=None)
+            )
+            return int(result.rowcount or 0)
+
+    async def mark_source_fragment_failed(self, fragment_id: str, error: str) -> SourceFragmentRecord:
+        async with self._database.session() as session:
+            fragment = await session.get(SourceFragmentRecord, fragment_id)
+            if fragment is None:
+                raise ApplicationError(
+                    code=ErrorCode.NOT_FOUND,
+                    message=f"Source fragment not found: {fragment_id}",
+                    status_code=404,
+                )
+            fragment.index_status = "failed"
+            fragment.last_error = error
+            fragment.updated_at = datetime.now(timezone.utc)
+            await session.flush()
+            await session.refresh(fragment)
+            return fragment
+
+    async def semantic_recommendations(
+        self,
+        case_id: str,
+        query: str | None = None,
+        limit: int = 12,
+        fragment_limit: int = DEFAULT_FRAGMENT_PREVIEW_LIMIT,
+    ) -> SourceSemanticRecallResult:
+        async with self._database.session() as session:
+            crisis_case = await session.get(CrisisCaseRecord, case_id)
+            if crisis_case is None:
+                raise ApplicationError(code=ErrorCode.NOT_FOUND, message="Case not found", status_code=404)
+
+            case_topic_rows = await session.execute(
+                select(CaseSourceTopicRecord, SourceTopicRecord)
+                .join(SourceTopicRecord, SourceTopicRecord.id == CaseSourceTopicRecord.topic_id)
+                .where(CaseSourceTopicRecord.case_id == case_id)
+            )
+            case_topics = [(case_topic, topic) for case_topic, topic in case_topic_rows.all()]
+            query_text = self._build_semantic_query(crisis_case, case_topics, query)
+            if not query_text:
+                return SourceSemanticRecallResult(False, "empty_query", None, 0, 0, [])
+
+            source_rows = await session.execute(
+                select(GlobalSourceDocumentRecord)
+                .where(GlobalSourceDocumentRecord.source_status == "active")
+                .order_by(GlobalSourceDocumentRecord.updated_at.desc())
+                .limit(250)
+            )
+            global_sources = list(source_rows.scalars().all())
+            candidate_rows = await session.execute(
+                select(SourceCandidateRecord)
+                .where(SourceCandidateRecord.case_id == case_id)
+                .order_by(SourceCandidateRecord.total_score.desc(), SourceCandidateRecord.created_at.desc())
+                .limit(100)
+            )
+            candidates = list(candidate_rows.scalars().all())
+
+            for source in global_sources:
+                await self._refresh_global_source_fragments(session, source)
+            for candidate in candidates:
+                await self._refresh_candidate_source_fragments(session, candidate)
+            await session.flush()
+
+            global_ids = [str(source.id) for source in global_sources]
+            candidate_ids = [str(candidate.id) for candidate in candidates]
+            fragment_query = select(SourceFragmentRecord).where(SourceFragmentRecord.index_status == "indexed")
+            source_filters = []
+            if global_ids:
+                source_filters.append(SourceFragmentRecord.global_source_id.in_(global_ids))
+            if candidate_ids:
+                source_filters.append(SourceFragmentRecord.source_candidate_id.in_(candidate_ids))
+            if not source_filters:
+                return SourceSemanticRecallResult(False, "no_sources", query_text, 0, 0, [])
+            fragment_query = fragment_query.where(or_(*source_filters))
+
+            fragment_rows = await session.execute(fragment_query.order_by(SourceFragmentRecord.fragment_index.asc()))
+            fragments = list(fragment_rows.scalars().all())
+            if not fragments:
+                return SourceSemanticRecallResult(False, "no_indexed_fragments", query_text, 0, 0, [])
+
+            query_vector = self._semantic_index.embed(query_text)
+            matches_by_source: dict[tuple[str, str], list[SourceFragmentMatch]] = {}
+            for fragment in fragments:
+                similarity = self._semantic_index.similarity(query_vector, fragment.embedding_vector)
+                if similarity <= 0.01:
+                    continue
+                source_scope = fragment.source_scope
+                source_id = str(fragment.global_source_id or fragment.source_candidate_id)
+                matches_by_source.setdefault((source_scope, source_id), []).append(
+                    SourceFragmentMatch(
+                        fragment=fragment,
+                        source_scope=source_scope,
+                        source_id=source_id,
+                        similarity=similarity,
+                    )
+                )
+
+            if not matches_by_source:
+                return SourceSemanticRecallResult(False, "no_matches", query_text, len(fragments), 0, [])
+
+            assignments = await self._assignments_for_sources(session, global_ids)
+            usage_counts = await self._usage_counts(session, global_ids) if global_ids else {}
+            attached_ids = await self._attached_source_ids(session, case_id, global_ids) if global_ids else set()
+            duplicate_hashes = await self._duplicate_values(session, GlobalSourceDocumentRecord.content_hash)
+            duplicate_urls = await self._duplicate_values(session, GlobalSourceDocumentRecord.canonical_url)
+            case_topic_ids = {str(topic.id) for _, topic in case_topics}
+            source_by_id = {str(source.id): source for source in global_sources}
+            candidate_by_id = {str(candidate.id): candidate for candidate in candidates}
+
+            entries: list[SourceSemanticRecommendationEntry] = []
+            for (source_scope, source_id), matches in matches_by_source.items():
+                sorted_matches = sorted(matches, key=lambda item: item.similarity, reverse=True)
+                semantic_support = aggregate_semantic_support([match.similarity for match in sorted_matches])
+                top_matches = sorted_matches[: max(1, fragment_limit)]
+                if source_scope == "global":
+                    source = source_by_id.get(source_id)
+                    if source is None:
+                        continue
+                    source_assignments = assignments.get(source_id, [])
+                    duplicate_candidate = (
+                        bool(source.content_hash and source.content_hash in duplicate_hashes)
+                        or bool(source.canonical_url and source.canonical_url in duplicate_urls)
+                    )
+                    final_score = self._global_semantic_score(
+                        source=source,
+                        assignments=source_assignments,
+                        usage_count=usage_counts.get(source_id, 0),
+                        semantic_support=semantic_support,
+                        case_topic_ids=case_topic_ids,
+                    )
+                    ranking_reasons = self._global_ranking_reasons(
+                        source=source,
+                        assignments=source_assignments,
+                        semantic_support=semantic_support,
+                        case_topic_ids=case_topic_ids,
+                    )
+                    entries.append(
+                        SourceSemanticRecommendationEntry(
+                            source_scope="global",
+                            source=source,
+                            candidate=None,
+                            assignments=source_assignments,
+                            usage_count=usage_counts.get(source_id, 0),
+                            duplicate_candidate=duplicate_candidate,
+                            already_in_case=source_id in attached_ids,
+                            semantic_support=semantic_support,
+                            final_score=final_score,
+                            matched_fragments=top_matches,
+                            ranking_reasons=ranking_reasons,
+                        )
+                    )
+                    continue
+
+                candidate = candidate_by_id.get(source_id)
+                if candidate is None:
+                    continue
+                final_score = self._candidate_semantic_score(candidate, semantic_support)
+                entries.append(
+                    SourceSemanticRecommendationEntry(
+                        source_scope="candidate",
+                        source=None,
+                        candidate=candidate,
+                        assignments=[],
+                        usage_count=0,
+                        duplicate_candidate=False,
+                        already_in_case=False,
+                        semantic_support=semantic_support,
+                        final_score=final_score,
+                        matched_fragments=top_matches,
+                        ranking_reasons=self._candidate_ranking_reasons(candidate, semantic_support),
+                    )
+                )
+
+            ranked = self._diversity_rerank(entries)[: max(1, limit)]
+            return SourceSemanticRecallResult(
+                applied=True,
+                reason=None,
+                query=query_text,
+                indexed_fragment_count=len(fragments),
+                matched_fragment_count=sum(len(matches) for matches in matches_by_source.values()),
+                entries=ranked,
+            )
+
     async def get_usage(self, global_source_id: str) -> tuple[
         GlobalSourceDocumentRecord,
         list[tuple[SourceTopicAssignmentRecord, SourceTopicRecord]],
@@ -410,6 +667,8 @@ class SourceLibraryRepository:
                     ),
                     now,
                 )
+            await self._refresh_candidate_source_fragments(session, candidate)
+            await self._refresh_global_source_fragments(session, source)
             await session.flush()
             await session.refresh(source)
             if assignment is not None:
@@ -427,13 +686,7 @@ class SourceLibraryRepository:
         usage_counts = await self._usage_counts(session, source_ids)
         attached_ids: set[str] = set()
         if case_id:
-            attached_rows = await session.execute(
-                select(SourceDocumentRecord.global_source_id).where(
-                    SourceDocumentRecord.case_id == case_id,
-                    SourceDocumentRecord.global_source_id.in_(source_ids),
-                )
-            )
-            attached_ids = {str(row[0]) for row in attached_rows.all() if row[0]}
+            attached_ids = await self._attached_source_ids(session, case_id, source_ids)
         duplicate_hashes = await self._duplicate_values(session, GlobalSourceDocumentRecord.content_hash)
         duplicate_urls = await self._duplicate_values(session, GlobalSourceDocumentRecord.canonical_url)
         return [
@@ -449,6 +702,297 @@ class SourceLibraryRepository:
             )
             for source in sources
         ]
+
+    async def _attached_source_ids(self, session, case_id: str, source_ids: list[str]) -> set[str]:
+        if not source_ids:
+            return set()
+        attached_rows = await session.execute(
+            select(SourceDocumentRecord.global_source_id).where(
+                SourceDocumentRecord.case_id == case_id,
+                SourceDocumentRecord.global_source_id.in_(source_ids),
+            )
+        )
+        return {str(row[0]) for row in attached_rows.all() if row[0]}
+
+    async def _refresh_global_source_fragments(
+        self,
+        session,
+        source: GlobalSourceDocumentRecord,
+    ) -> list[SourceFragmentRecord]:
+        return await self._replace_fragments(
+            session=session,
+            source_scope="global",
+            source_id=str(source.id),
+            content=source.content,
+        )
+
+    async def _refresh_candidate_source_fragments(
+        self,
+        session,
+        candidate: SourceCandidateRecord,
+    ) -> list[SourceFragmentRecord]:
+        return await self._replace_fragments(
+            session=session,
+            source_scope="candidate",
+            source_id=str(candidate.id),
+            content=candidate.content or candidate.excerpt,
+        )
+
+    async def _replace_fragments(
+        self,
+        session,
+        source_scope: str,
+        source_id: str,
+        content: str,
+    ) -> list[SourceFragmentRecord]:
+        now = datetime.now(timezone.utc)
+        text_fragments = chunk_source_text(content)
+        existing_rows = await session.execute(
+            select(SourceFragmentRecord)
+            .where(*self._fragment_source_filters(source_scope, source_id))
+            .order_by(SourceFragmentRecord.fragment_index.asc())
+        )
+        existing = list(existing_rows.scalars().all())
+        if self._fragments_current(existing, text_fragments):
+            return existing
+
+        if existing:
+            await session.execute(
+                update(SourceFragmentRecord)
+                .where(*self._fragment_source_filters(source_scope, source_id))
+                .values(index_status="stale", updated_at=now, last_error=None)
+            )
+            await session.flush()
+            await session.execute(delete(SourceFragmentRecord).where(*self._fragment_source_filters(source_scope, source_id)))
+
+        rows: list[SourceFragmentRecord] = []
+        for fragment in text_fragments:
+            vector = self._semantic_index.embed(fragment.text)
+            row = SourceFragmentRecord(
+                source_scope=source_scope,
+                global_source_id=source_id if source_scope == "global" else None,
+                source_candidate_id=source_id if source_scope == "candidate" else None,
+                fragment_index=fragment.index,
+                fragment_text=fragment.text,
+                content_hash=fragment.content_hash,
+                embedding_model=EMBEDDING_MODEL,
+                embedding_version=EMBEDDING_VERSION,
+                embedding_vector=vector,
+                vector_index_id=f"{source_scope}:{source_id}:{fragment.index}",
+                index_status="indexed",
+                last_indexed_at=now,
+                last_error=None,
+                created_at=now,
+                updated_at=now,
+            )
+            rows.append(row)
+        if rows:
+            session.add_all(rows)
+            await session.flush()
+            for row in rows:
+                await session.refresh(row)
+        return rows
+
+    def _fragments_current(self, existing: list[SourceFragmentRecord], text_fragments) -> bool:
+        if len(existing) != len(text_fragments):
+            return False
+        for row, fragment in zip(existing, text_fragments, strict=True):
+            if row.fragment_index != fragment.index:
+                return False
+            if row.content_hash != fragment.content_hash:
+                return False
+            if row.embedding_model != EMBEDDING_MODEL or row.embedding_version != EMBEDDING_VERSION:
+                return False
+            if row.index_status != "indexed" or not row.embedding_vector:
+                return False
+        return True
+
+    def _fragment_source_filters(self, source_scope: str, source_id: str):
+        if source_scope == "global":
+            return (
+                SourceFragmentRecord.source_scope == "global",
+                SourceFragmentRecord.global_source_id == source_id,
+            )
+        if source_scope == "candidate":
+            return (
+                SourceFragmentRecord.source_scope == "candidate",
+                SourceFragmentRecord.source_candidate_id == source_id,
+            )
+        raise ApplicationError(
+            code=ErrorCode.VALIDATION_ERROR,
+            message=f"Invalid source fragment scope: {source_scope}",
+            status_code=400,
+        )
+
+    def _build_semantic_query(
+        self,
+        crisis_case: CrisisCaseRecord,
+        case_topics: list[tuple[CaseSourceTopicRecord, SourceTopicRecord]],
+        query: str | None,
+    ) -> str:
+        parts = [query or "", crisis_case.title, crisis_case.description]
+        for case_topic, topic in case_topics:
+            parts.extend([topic.name, topic.description, case_topic.reason])
+        return " ".join(part.strip() for part in parts if part and part.strip()).strip()
+
+    def _global_semantic_score(
+        self,
+        source: GlobalSourceDocumentRecord,
+        assignments: list[tuple[SourceTopicAssignmentRecord, SourceTopicRecord]],
+        usage_count: int,
+        semantic_support: float,
+        case_topic_ids: set[str],
+    ) -> float:
+        topic_score = max(
+            [
+                assignment.relevance_score
+                for assignment, topic in assignments
+                if not case_topic_ids or str(topic.id) in case_topic_ids
+            ]
+            or [0.0]
+        )
+        authority_score = _authority_score(source.authority_level)
+        freshness_score = _freshness_score(source.freshness_status)
+        usage_score = min(1.0, usage_count / 5)
+        score = (
+            semantic_support * 0.4
+            + topic_score * 0.2
+            + authority_score * 0.15
+            + freshness_score * 0.1
+            + usage_score * 0.05
+            + _source_quality_score(source.source_kind) * 0.1
+        )
+        return round(score, 6)
+
+    def _candidate_semantic_score(self, candidate: SourceCandidateRecord, semantic_support: float) -> float:
+        score = (
+            semantic_support * 0.45
+            + float(candidate.relevance or 0) * 0.15
+            + float(candidate.authority or 0) * 0.12
+            + float(candidate.freshness or 0) * 0.08
+            + float(candidate.grounding_value or 0) * 0.15
+            + float(candidate.total_score or 0) * 0.05
+        )
+        return round(score, 6)
+
+    def _global_ranking_reasons(
+        self,
+        source: GlobalSourceDocumentRecord,
+        assignments: list[tuple[SourceTopicAssignmentRecord, SourceTopicRecord]],
+        semantic_support: float,
+        case_topic_ids: set[str],
+    ) -> list[SourceRankingReason]:
+        topic_matches = [topic for assignment, topic in assignments if str(topic.id) in case_topic_ids]
+        reasons = [
+            SourceRankingReason(
+                key="semantic_support",
+                label="Semantic support",
+                value=f"{round(semantic_support * 100)} match",
+                score=semantic_support,
+            ),
+            SourceRankingReason(
+                key="authority",
+                label="Authority",
+                value=source.authority_level,
+                score=_authority_score(source.authority_level),
+            ),
+            SourceRankingReason(
+                key="freshness",
+                label="Freshness",
+                value=source.freshness_status,
+                score=_freshness_score(source.freshness_status),
+            ),
+        ]
+        if topic_matches:
+            reasons.append(
+                SourceRankingReason(
+                    key="topic_relationship",
+                    label="Topic relationship",
+                    value=", ".join(topic.name for topic in topic_matches[:2]),
+                    score=max(
+                        [
+                            assignment.relevance_score
+                            for assignment, topic in assignments
+                            if str(topic.id) in case_topic_ids
+                        ]
+                        or [0.0]
+                    ),
+                )
+            )
+        reasons.append(
+            SourceRankingReason(
+                key="diversity",
+                label="Diversity",
+                value=source.source_kind,
+                score=_source_quality_score(source.source_kind),
+            )
+        )
+        return reasons
+
+    def _candidate_ranking_reasons(
+        self,
+        candidate: SourceCandidateRecord,
+        semantic_support: float,
+    ) -> list[SourceRankingReason]:
+        return [
+            SourceRankingReason(
+                key="semantic_support",
+                label="Semantic support",
+                value=f"{round(semantic_support * 100)} match",
+                score=semantic_support,
+            ),
+            SourceRankingReason(
+                key="candidate_review_status",
+                label="Review status",
+                value=str(candidate.review_status),
+                score=None,
+            ),
+            SourceRankingReason(
+                key="grounding_value",
+                label="Grounding value",
+                value=f"{round(float(candidate.grounding_value or 0) * 100)}",
+                score=float(candidate.grounding_value or 0),
+            ),
+            SourceRankingReason(
+                key="diversity",
+                label="Diversity",
+                value=candidate.source_type or candidate.classification,
+                score=float(candidate.diversity or 0),
+            ),
+        ]
+
+    def _diversity_rerank(
+        self,
+        entries: list[SourceSemanticRecommendationEntry],
+    ) -> list[SourceSemanticRecommendationEntry]:
+        if not entries:
+            return []
+        strongest = max(entries, key=lambda entry: (entry.semantic_support, entry.final_score))
+        remaining = [entry for entry in entries if entry is not strongest]
+        result = [strongest]
+        seen_buckets = {self._diversity_bucket(strongest)}
+
+        while remaining:
+            best_index = 0
+            best_score = -1.0
+            for index, entry in enumerate(remaining):
+                bucket = self._diversity_bucket(entry)
+                diversity_bonus = 0.08 if bucket not in seen_buckets else -0.04
+                adjusted_score = entry.final_score + diversity_bonus
+                if adjusted_score > best_score:
+                    best_index = index
+                    best_score = adjusted_score
+            selected = remaining.pop(best_index)
+            result.append(selected)
+            seen_buckets.add(self._diversity_bucket(selected))
+        return result
+
+    def _diversity_bucket(self, entry: SourceSemanticRecommendationEntry) -> str:
+        if entry.source is not None:
+            return f"global:{entry.source.source_kind}:{entry.source.authority_level}"
+        if entry.candidate is not None:
+            return f"candidate:{entry.candidate.source_type}:{entry.candidate.provider}:{entry.candidate.region}"
+        return entry.source_scope
 
     async def _assignments_for_sources(
         self,
@@ -611,3 +1155,31 @@ def _authority_for_source_kind(source_kind: str) -> str:
     if normalized in {"social", "complaint", "community"}:
         return "medium"
     return "medium"
+
+
+def _authority_score(authority_level: str) -> float:
+    return {
+        "high": 1.0,
+        "medium": 0.7,
+        "low": 0.35,
+    }.get((authority_level or "").lower(), 0.6)
+
+
+def _freshness_score(freshness_status: str) -> float:
+    return {
+        "current": 1.0,
+        "recent": 0.85,
+        "stale": 0.25,
+        "unknown": 0.5,
+    }.get((freshness_status or "").lower(), 0.6)
+
+
+def _source_quality_score(source_kind: str) -> float:
+    return {
+        "official": 1.0,
+        "research": 0.9,
+        "news": 0.75,
+        "complaint": 0.6,
+        "social": 0.55,
+        "community": 0.55,
+    }.get((source_kind or "").lower(), 0.65)

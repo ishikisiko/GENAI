@@ -85,7 +85,7 @@ export default function EvidencePackPreviewPage() {
         action={pack && <PTag color={pack.status === "grounding_started" ? "notification-success-soft" : "background-frosted"}>{pack.status}</PTag>}
       />
 
-      <div className="p-fluid-lg max-w-6xl">
+      <div className="p-fluid-lg w-full">
         {error && (
           <PInlineNotification heading="Error" description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
         )}
@@ -96,11 +96,11 @@ export default function EvidencePackPreviewPage() {
             <PText className="text-contrast-medium">Evidence pack not found.</PText>
           </div>
         ) : (
-          <div className="grid grid-cols-5 gap-fluid-md">
-            <div className="col-span-3 flex flex-col gap-static-sm">
+          <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-5">
+            <div className="flex flex-col gap-static-sm xl:col-span-3">
               {pack.sources.map((source) => (
                 <div key={source.id} className="bg-surface border border-contrast-low rounded-lg p-fluid-sm">
-                  <div className="flex items-start justify-between gap-static-md">
+                  <div className="flex flex-col gap-static-sm sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex items-center gap-static-xs flex-wrap mb-static-xs">
                         <PTag color="notification-info-soft">{source.source_type}</PTag>
@@ -116,7 +116,7 @@ export default function EvidencePackPreviewPage() {
                     {source.excerpt || source.content}
                   </PText>
 
-                  <div className="grid grid-cols-6 gap-static-xs mt-static-sm">
+                  <div className="grid grid-cols-2 gap-static-xs mt-static-sm sm:grid-cols-3 2xl:grid-cols-6">
                     {Object.entries(source.score_dimensions).map(([key, value]) => (
                       <div key={key} className="bg-canvas rounded p-static-xs">
                         <PText size="x-small" className="text-contrast-medium">{key.replace("_", " ")}</PText>
@@ -128,8 +128,8 @@ export default function EvidencePackPreviewPage() {
               ))}
             </div>
 
-            <div className="col-span-2">
-              <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md sticky top-fluid-md flex flex-col gap-fluid-sm">
+            <div className="xl:col-span-2">
+              <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md flex flex-col gap-fluid-sm xl:sticky xl:top-fluid-md">
                 <PHeading size="small">{pack.title}</PHeading>
                 <div className="grid grid-cols-2 gap-static-xs">
                   <div className="bg-canvas rounded p-static-sm text-center">

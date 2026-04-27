@@ -111,7 +111,7 @@ export default function Dashboard() {
 
       <div className="p-fluid-lg">
         {demoError && (
-          <div className="mb-fluid-sm max-w-4xl">
+          <div className="mb-fluid-sm w-full">
             <PInlineNotification
               heading="Demo load failed"
               description={demoError}
@@ -152,7 +152,7 @@ export default function Dashboard() {
               </PButton>
             </div>
 
-            <div className="mt-fluid-sm max-w-md bg-surface border border-contrast-low rounded-lg p-fluid-sm text-left">
+            <div className="mt-fluid-sm w-full max-w-2xl bg-surface border border-contrast-low rounded-lg p-fluid-sm text-left">
               <div className="flex gap-static-sm">
                 <PIcon name="information" color="contrast-medium" />
                 <div>
@@ -165,8 +165,8 @@ export default function Dashboard() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-fluid-sm max-w-4xl">
-            <div className="grid grid-cols-3 gap-fluid-md mb-fluid-md">
+          <div className="grid grid-cols-1 gap-fluid-sm w-full">
+            <div className="grid grid-cols-1 gap-fluid-md mb-fluid-md md:grid-cols-3">
               {dashboardStats.map((stat) => (
                 <div key={stat.label} className="bg-surface border border-contrast-low rounded-lg p-fluid-sm flex items-center gap-static-md">
                   <div className="w-10 h-10 bg-canvas rounded-md flex items-center justify-center">
@@ -189,9 +189,9 @@ export default function Dashboard() {
                   className="bg-surface border border-contrast-low rounded-lg p-fluid-md hover:border-contrast-medium transition-colors cursor-pointer group"
                   onClick={() => navigate(getNextStep(c))}
                 >
-                  <div className="flex items-start justify-between gap-static-md">
+                  <div className="flex flex-col gap-static-md sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-static-sm mb-static-xs">
+                      <div className="flex flex-wrap items-center gap-static-sm mb-static-xs">
                         <StatusBadge status={c.status} />
                         {c.id === DEMO_CASE_ID && (
                           <PTag color="background-frosted" icon="ai-spark">Demo</PTag>
