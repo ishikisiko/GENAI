@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from backend.domain.simulation_records import (
     CandidateReviewStatus,
+    CrisisCaseRecord,
     GlobalSourceDocumentRecord,
     SourceCandidateRecord,
     SourceFragmentRecord,
@@ -17,6 +18,7 @@ from backend.repository.source_library_repository import (
 )
 from backend.services.semantic_source_recall import (
     LocalSemanticIndex,
+    OpenAICompatibleSemanticIndex,
     aggregate_semantic_support,
     chunk_source_text,
 )
@@ -102,6 +104,85 @@ def _fragment(
     )
 
 
+class _Rows:
+    def __init__(self, rows=None, scalars=None):
+        self._rows = rows or []
+        self._scalars = scalars or []
+
+    def all(self):
+        return self._rows
+
+    def scalars(self):
+        return _Scalars(self._scalars)
+
+
+class _Scalars:
+    def __init__(self, values):
+        self._values = values
+
+    def all(self):
+        return self._values
+
+
+class _SemanticSession:
+    def __init__(self, source: GlobalSourceDocumentRecord, fragment: SourceFragmentRecord) -> None:
+        self._source = source
+        self._fragment = fragment
+        self._execute_results = [
+            _Rows(rows=[]),
+            _Rows(scalars=[source]),
+            _Rows(scalars=[]),
+            _Rows(scalars=[fragment]),
+            _Rows(rows=[]),
+            _Rows(rows=[]),
+            _Rows(scalars=[]),
+            _Rows(scalars=[]),
+            _Rows(scalars=[]),
+        ]
+
+    async def get(self, model, record_id: str):
+        if model is CrisisCaseRecord:
+            return CrisisCaseRecord(
+                id=record_id,
+                title="Battery recall",
+                description="Regulator warning and consumer reports",
+                status="draft",
+                created_at=_now(),
+                updated_at=_now(),
+            )
+        return None
+
+    async def execute(self, statement):
+        return self._execute_results.pop(0)
+
+
+class _SemanticSessionContext:
+    def __init__(self, session: _SemanticSession) -> None:
+        self._session = session
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+class _SemanticDatabase:
+    def __init__(self, source: GlobalSourceDocumentRecord, fragment: SourceFragmentRecord) -> None:
+        self._session = _SemanticSession(source, fragment)
+
+    def session(self):
+        return _SemanticSessionContext(self._session)
+
+
+class _NoReadPathRefreshRepository(SourceLibraryRepository):
+    async def _refresh_global_source_fragments(self, session, source):
+        raise AssertionError("semantic read path must not refresh global fragments")
+
+    async def _refresh_candidate_source_fragments(self, session, candidate):
+        raise AssertionError("semantic read path must not refresh candidate fragments")
+
+
 def test_chunking_and_local_embedding_are_deterministic():
     fragments = chunk_source_text("Battery recall evidence. Regulator warning issued.")
     index = LocalSemanticIndex()
@@ -112,11 +193,44 @@ def test_chunking_and_local_embedding_are_deterministic():
     assert index.similarity(index.embed("battery recall"), index.embed(fragments[0].text)) > 0
 
 
+def test_semantic_recommendations_uses_existing_index_without_refreshing_sources():
+    source = _global_source("10000000-0000-0000-0000-000000000001")
+    fragment = _fragment(
+        "10000000-0000-0000-0000-000000000041",
+        "global",
+        str(source.id),
+        text=source.content,
+    )
+    repository = _NoReadPathRefreshRepository(_SemanticDatabase(source, fragment))
+
+    result = asyncio.run(
+        repository.semantic_recommendations(
+            "10000000-0000-0000-0000-000000000030",
+            query="battery recall regulator",
+        )
+    )
+
+    assert result.applied is True
+    assert result.indexed_fragment_count == 1
+    assert result.entries[0].source is source
+    assert result.entries[0].matched_fragments[0].fragment is fragment
+
+
 def test_bounded_aggregation_does_not_sum_repeated_fragments():
     repeated_scores = [0.9, 0.9, 0.9, 0.9, 0.9]
 
     assert aggregate_semantic_support(repeated_scores, top_n=3) == 0.9
     assert aggregate_semantic_support([0.9, 0.6, 0.3], top_n=2) == 0.75
+
+
+def test_openai_compatible_embedding_response_mapping():
+    index = OpenAICompatibleSemanticIndex(
+        api_key="test-key",
+        base_url="https://ark.cn-beijing.volces.com/api/coding/v3",
+        model="doubao-embedding-vision",
+    )
+
+    assert index._extract_embedding({"data": [{"embedding": [0.1, "0.2"]}]}) == [0.1, 0.2]
 
 
 def test_diversity_rerank_preserves_strongest_match_and_mixed_coverage():

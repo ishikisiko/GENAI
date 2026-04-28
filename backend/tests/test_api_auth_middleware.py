@@ -54,6 +54,8 @@ def _build_config(**overrides: object) -> BackendConfig:
         "port": 9000,
         "cors_origins": "https://frontend.example",
         "product_auth_mode": "require_bearer",
+        "source_discovery_search_provider": "mock",
+        "semantic_embedding_provider": "local",
     }
     defaults.update(overrides)
     return BackendConfig(**defaults)

@@ -43,8 +43,12 @@ class BackendConfig(BaseSettings):
     llm_max_tokens: int = Field(default=4096, alias="LLM_MAX_TOKENS")
     simulation_stale_timeout_seconds: int = Field(default=1200, alias="SIMULATION_STALE_RUN_TIMEOUT_SECONDS")
     source_discovery_search_provider: Literal["mock", "brave"] = Field(
-        default="mock",
+        default="brave",
         alias="SOURCE_DISCOVERY_SEARCH_PROVIDER",
+    )
+    source_discovery_content_fetcher: Literal["http", "mock"] = Field(
+        default="http",
+        alias="SOURCE_DISCOVERY_CONTENT_FETCHER",
     )
     brave_search_api_key: str | None = Field(default=None, alias="BRAVE_SEARCH_API_KEY")
     brave_search_endpoint: str = Field(
@@ -58,6 +62,30 @@ class BackendConfig(BaseSettings):
         default=1.0,
         ge=0.0,
         alias="BRAVE_SEARCH_RATE_LIMIT_SECONDS",
+    )
+    semantic_embedding_provider: Literal["local", "openai_compatible"] = Field(
+        default="openai_compatible",
+        alias="SEMANTIC_EMBEDDING_PROVIDER",
+    )
+    semantic_embedding_api_key: str | None = Field(default=None, alias="SEMANTIC_EMBEDDING_API_KEY")
+    semantic_embedding_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        alias="SEMANTIC_EMBEDDING_BASE_URL",
+    )
+    semantic_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="SEMANTIC_EMBEDDING_MODEL",
+    )
+    semantic_embedding_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0.0,
+        alias="SEMANTIC_EMBEDDING_TIMEOUT_SECONDS",
+    )
+    semantic_fragment_maintenance_batch_size: int = Field(
+        default=5,
+        ge=0,
+        le=50,
+        alias="SEMANTIC_FRAGMENT_MAINTENANCE_BATCH_SIZE",
     )
 
     def __init__(self, **values: object) -> None:

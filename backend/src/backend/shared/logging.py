@@ -9,6 +9,30 @@ from typing import Any, Generator
 
 
 _LOG_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("backend_log_context", default={})
+_LOG_RECORD_RESERVED = {
+    "args",
+    "asctime",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "funcName",
+    "levelname",
+    "levelno",
+    "lineno",
+    "module",
+    "msecs",
+    "message",
+    "msg",
+    "name",
+    "pathname",
+    "process",
+    "processName",
+    "relativeCreated",
+    "stack_info",
+    "thread",
+    "threadName",
+}
 
 
 def _current_context() -> dict[str, Any]:
@@ -34,11 +58,18 @@ def configure_logging(service_name: str, level: str) -> None:
                 "message": record.getMessage(),
             }
             base.update(_current_context())
+            base.update(
+                {
+                    key: value
+                    for key, value in record.__dict__.items()
+                    if key not in _LOG_RECORD_RESERVED and not key.startswith("_")
+                }
+            )
             if record.exc_info:
                 base["error"] = self.formatException(record.exc_info)
             if record.stack_info:
                 base["stack"] = record.stack_info
-            return json.dumps(base, ensure_ascii=False)
+            return json.dumps(base, ensure_ascii=False, default=str)
 
     level_name = level.upper()
     handler = logging.StreamHandler()

@@ -90,6 +90,8 @@ def _build_config():
         database_url="postgresql+asyncpg://localhost/db",
         host="127.0.0.1",
         port=9000,
+        source_discovery_search_provider="mock",
+        semantic_embedding_provider="local",
     )
 
 

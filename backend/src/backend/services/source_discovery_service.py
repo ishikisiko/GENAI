@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from html import unescape
+from html.parser import HTMLParser
 from hashlib import sha256
+import re
 import time
 from typing import Any, Awaitable, Callable, Protocol
 from urllib.parse import urlparse, urlunparse
@@ -305,6 +308,110 @@ class MockContentFetcher:
         )
 
 
+class _HtmlTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._ignored_depth = 0
+        self._chunks: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "noscript", "svg"}:
+            self._ignored_depth += 1
+        if tag in {"p", "br", "div", "section", "article", "li", "h1", "h2", "h3"}:
+            self._chunks.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript", "svg"} and self._ignored_depth > 0:
+            self._ignored_depth -= 1
+        if tag in {"p", "div", "section", "article", "li", "h1", "h2", "h3"}:
+            self._chunks.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if self._ignored_depth == 0:
+            self._chunks.append(data)
+
+    def text(self) -> str:
+        return normalize_whitespace(unescape(" ".join(self._chunks)))
+
+
+class HttpContentFetcher:
+    def __init__(
+        self,
+        timeout_seconds: float = 5.0,
+        max_bytes: int = 1_000_000,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._timeout_seconds = max(timeout_seconds, 1.0)
+        self._max_bytes = max(max_bytes, 8192)
+        self._transport = transport
+
+    async def fetch(self, result: SearchResult) -> FetchedContent:
+        if not result.url.startswith(("http://", "https://")):
+            return self._fallback_content(result, "unsupported_url")
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout_seconds,
+                follow_redirects=True,
+                transport=self._transport,
+                headers={
+                    "User-Agent": "GenaiSourceDiscovery/1.0 (+https://example.local/source-discovery)",
+                    "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
+                },
+            ) as client:
+                response = await client.get(result.url)
+                response.raise_for_status()
+                raw_content = response.content[: self._max_bytes]
+                content_type = response.headers.get("content-type", "")
+                text = self._extract_text(raw_content, content_type, response.encoding)
+                if not text:
+                    return self._fallback_content(result, "empty_content")
+                excerpt = text[:500]
+                return FetchedContent(
+                    content=text,
+                    excerpt=excerpt,
+                    metadata={
+                        "fetch_status": "fetched",
+                        "http_status": response.status_code,
+                        "content_type": content_type,
+                        "final_url": str(response.url),
+                        "fetched_bytes": len(raw_content),
+                    },
+                )
+        except httpx.HTTPStatusError as exc:
+            return self._fallback_content(
+                result,
+                "http_error",
+                {"http_status": exc.response.status_code, "reason": exc.response.text[:240]},
+            )
+        except httpx.HTTPError as exc:
+            return self._fallback_content(result, "fetch_error", {"reason": str(exc)})
+
+    @staticmethod
+    def _extract_text(raw_content: bytes, content_type: str, encoding: str | None) -> str:
+        charset = encoding or "utf-8"
+        text = raw_content.decode(charset, errors="replace")
+        if "html" not in content_type.lower() and "<html" not in text[:500].lower():
+            return normalize_whitespace(text)
+        parser = _HtmlTextExtractor()
+        parser.feed(text)
+        parser.close()
+        return parser.text()
+
+    @staticmethod
+    def _fallback_content(
+        result: SearchResult,
+        fetch_status: str,
+        metadata: dict[str, object] | None = None,
+    ) -> FetchedContent:
+        content = normalize_whitespace(f"{result.title}. {result.snippet}")
+        return FetchedContent(
+            content=content,
+            excerpt=content[:500],
+            metadata={"fetch_status": fetch_status, **(metadata or {}), **(result.metadata or {})},
+        )
+
+
 class SimpleSourceClassifier:
     def classify(self, result: SearchResult, content: FetchedContent) -> str:
         lowered = f"{result.source_type} {result.title} {content.content}".lower()
@@ -387,6 +494,16 @@ def build_source_discovery_search_provider(config: BackendConfig) -> SearchProvi
         )
     raise ConfigurationError(
         f"Unsupported SOURCE_DISCOVERY_SEARCH_PROVIDER: {config.source_discovery_search_provider}"
+    )
+
+
+def build_source_discovery_content_fetcher(config: BackendConfig) -> ContentFetcher:
+    if config.source_discovery_content_fetcher == "mock":
+        return MockContentFetcher()
+    if config.source_discovery_content_fetcher == "http":
+        return HttpContentFetcher(timeout_seconds=config.request_timeout_seconds)
+    raise ConfigurationError(
+        f"Unsupported SOURCE_DISCOVERY_CONTENT_FETCHER: {config.source_discovery_content_fetcher}"
     )
 
 
@@ -706,6 +823,10 @@ def canonicalize_url(url: str | None) -> str | None:
 
 def hash_content(content: str) -> str:
     return sha256(" ".join(content.split()).lower().encode("utf-8")).hexdigest()
+
+
+def normalize_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def format_dt(value: datetime | None) -> str | None:

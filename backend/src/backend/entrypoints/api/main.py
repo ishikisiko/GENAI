@@ -22,6 +22,7 @@ from backend.services.extraction_service import ExtractionService
 from backend.services.llm_client import LlmJsonClient
 from backend.services.agent_generation_contracts import AgentGenerationRequest
 from backend.services.agent_generation_service import AgentGenerationService
+from backend.services.semantic_source_recall import build_semantic_index
 from backend.services.simulation_contracts import SimulationSubmissionRequest
 from backend.services.simulation_service import SimulationService
 from backend.services.source_discovery_contracts import (
@@ -30,7 +31,11 @@ from backend.services.source_discovery_contracts import (
     SourceCandidateReviewRequest,
     SourceDiscoveryJobCreateRequest,
 )
-from backend.services.source_discovery_service import SourceDiscoveryService, build_source_discovery_search_provider
+from backend.services.source_discovery_service import (
+    SourceDiscoveryService,
+    build_source_discovery_content_fetcher,
+    build_source_discovery_search_provider,
+)
 from backend.services.source_library_contracts import (
     AttachGlobalSourceRequest,
     CaseSourceTopicCreateRequest,
@@ -92,9 +97,10 @@ def create_app(
         job_repository=repository,
         extraction_repository=ExtractionRepository(database),
         search_provider=build_source_discovery_search_provider(config),
+        content_fetcher=build_source_discovery_content_fetcher(config),
     )
     source_library_service = source_library_service or SourceLibraryService(
-        repository=SourceLibraryRepository(database),
+        repository=SourceLibraryRepository(database, semantic_index=build_semantic_index(config)),
     )
     agent_generation_service = agent_generation_service or AgentGenerationService(
         simulation_repository=SimulationRepository(database),

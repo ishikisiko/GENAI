@@ -174,8 +174,14 @@ class JobRepository:
 
     async def get_status_counts(self) -> dict[str, int]:
         async with self._database.session() as session:
-            rows = await session.execute(select(Job.status, func.count(Job.id)))
-            return {status: count for status, count in rows.all()}
+            rows = await session.execute(
+                select(Job.status, func.count(Job.id))
+                .group_by(Job.status)
+            )
+            counts = {status.value: 0 for status in JobStatus}
+            for status, count in rows.all():
+                counts[str(status)] = int(count or 0)
+            return counts
 
     async def get_job(self, job_id: str) -> Job:
         async with self._database.session() as session:

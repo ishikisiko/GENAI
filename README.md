@@ -30,9 +30,10 @@ npm install
 cp .env.local.example .env.local
 ```
 
-3. Copy the function secrets template:
+3. Copy the backend and function secrets templates:
 
 ```bash
+cp backend/.env.example backend/.env
 cp supabase/functions/.env.example supabase/functions/.env
 ```
 
@@ -55,11 +56,22 @@ npm run supabase:status
   - `VITE_SUPABASE_ANON_KEY=<local anon key>`
   - `VITE_BACKEND_API_BASE=http://127.0.0.1:8000`
   - `VITE_BACKEND_URL=http://127.0.0.1:8000` (`VITE_BACKEND_API_BASE` is preferred; `VITE_BACKEND_URL` is kept as a compatibility alias)
-- `supabase/functions/.env`
+- `backend/.env`
+  - `APP_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres`
   - `LLM_API_KEY=<your LLM key>`
   - `LLM_MODEL=<your model, default gpt-4o-mini>`
   - `LLM_BASE_URL=<OpenAI-compatible base URL, default https://api.openai.com/v1>`
   - `LLM_PROVIDER=<openai|anthropic>`
+  - `BRAVE_SEARCH_API_KEY=<your Brave Search key>`
+  - `SOURCE_DISCOVERY_SEARCH_PROVIDER=brave` (`mock` is available for offline local runs)
+  - `SOURCE_DISCOVERY_CONTENT_FETCHER=http` (`mock` is available for deterministic local runs)
+  - `SEMANTIC_EMBEDDING_PROVIDER=openai_compatible` (`local` is available for offline local runs)
+  - `SEMANTIC_EMBEDDING_BASE_URL=<OpenAI-compatible embeddings base URL, default https://api.openai.com/v1>`
+  - `SEMANTIC_EMBEDDING_MODEL=<embedding model name, default text-embedding-3-small>`
+  - `SEMANTIC_EMBEDDING_API_KEY=<embedding API key, falls back to LLM_API_KEY or OPENAI_API_KEY>`
+- `supabase/functions/.env`
+  - Only needed when serving compatibility Edge Functions.
+  - Keep the LLM fields aligned with `backend/.env` if you use those shims.
 
 Supabase reserves environment names that start with `SUPABASE_` for Edge
 Functions, so do not put `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` in

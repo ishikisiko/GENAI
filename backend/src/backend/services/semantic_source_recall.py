@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from hashlib import sha256
 import math
 import re
+from typing import Any, Protocol
+
+import httpx
+
+from backend.shared.config import BackendConfig
+from backend.shared.errors import ConfigurationError, DependencyError
 
 
 EMBEDDING_MODEL = "local-token-hash"
@@ -30,6 +36,9 @@ class LocalSemanticIndex:
     version = EMBEDDING_VERSION
     dimensions = EMBEDDING_DIMENSIONS
 
+    async def embed_text(self, text: str) -> list[float]:
+        return self.embed(text)
+
     def embed(self, text: str) -> list[float]:
         tokens = tokenize(text)
         if not tokens:
@@ -54,6 +63,109 @@ class LocalSemanticIndex:
             return 0.0
         score = sum(left[index] * right[index] for index in range(width))
         return round(max(0.0, min(score, 1.0)), 6)
+
+
+class SemanticIndex(Protocol):
+    model: str
+    version: str
+
+    async def embed_text(self, text: str) -> list[float]:
+        ...
+
+    def similarity(self, left: list[float] | None, right: list[float] | None) -> float:
+        ...
+
+
+class OpenAICompatibleSemanticIndex:
+    version = "v1"
+
+    def __init__(
+        self,
+        api_key: str | None,
+        base_url: str,
+        model: str,
+        timeout_seconds: float = 10.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        if not api_key:
+            raise ConfigurationError(
+                "SEMANTIC_EMBEDDING_API_KEY, LLM_API_KEY, or OPENAI_API_KEY is required for openai_compatible embeddings"
+            )
+        if not model:
+            raise ConfigurationError("SEMANTIC_EMBEDDING_MODEL is required for openai_compatible embeddings")
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self.model = model
+        self._timeout_seconds = timeout_seconds
+        self._transport = transport
+
+    async def embed_text(self, text: str) -> list[float]:
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout_seconds,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(
+                    f"{self._base_url}/embeddings",
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"model": self.model, "input": text},
+                )
+                response.raise_for_status()
+                return self._extract_embedding(response.json())
+        except httpx.HTTPStatusError as exc:
+            raise DependencyError(
+                "semantic_embedding",
+                details={"status_code": exc.response.status_code, "reason": exc.response.text[:240]},
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise DependencyError("semantic_embedding", details={"reason": str(exc)}) from exc
+
+    def similarity(self, left: list[float] | None, right: list[float] | None) -> float:
+        return cosine_similarity(left, right)
+
+    def _extract_embedding(self, payload: dict[str, Any]) -> list[float]:
+        data = payload.get("data")
+        if isinstance(data, list) and data:
+            first = data[0]
+            if isinstance(first, dict):
+                embedding = first.get("embedding")
+                if isinstance(embedding, list):
+                    return [float(value) for value in embedding]
+        embedding = payload.get("embedding")
+        if isinstance(embedding, list):
+            return [float(value) for value in embedding]
+        raise DependencyError("semantic_embedding", details={"reason": "Embedding response did not include a vector"})
+
+
+def cosine_similarity(left: list[float] | None, right: list[float] | None) -> float:
+    if not left or not right:
+        return 0.0
+    width = min(len(left), len(right))
+    if width == 0:
+        return 0.0
+    dot = sum(left[index] * right[index] for index in range(width))
+    left_magnitude = math.sqrt(sum(left[index] * left[index] for index in range(width)))
+    right_magnitude = math.sqrt(sum(right[index] * right[index] for index in range(width)))
+    if left_magnitude == 0 or right_magnitude == 0:
+        return 0.0
+    score = dot / (left_magnitude * right_magnitude)
+    return round(max(0.0, min(score, 1.0)), 6)
+
+
+def build_semantic_index(config: BackendConfig) -> SemanticIndex:
+    if config.semantic_embedding_provider == "local":
+        return LocalSemanticIndex()
+    if config.semantic_embedding_provider == "openai_compatible":
+        return OpenAICompatibleSemanticIndex(
+            api_key=config.semantic_embedding_api_key or config.llm_api_key or config.openai_api_key,
+            base_url=config.semantic_embedding_base_url,
+            model=config.semantic_embedding_model,
+            timeout_seconds=config.semantic_embedding_timeout_seconds,
+        )
+    raise ConfigurationError(f"Unsupported SEMANTIC_EMBEDDING_PROVIDER: {config.semantic_embedding_provider}")
 
 
 def tokenize(text: str) -> list[str]:

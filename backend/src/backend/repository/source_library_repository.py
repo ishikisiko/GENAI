@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+from time import perf_counter
 from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy import delete, func, or_, select, update
@@ -29,13 +30,13 @@ from backend.services.source_library_contracts import (
 from backend.services.source_discovery_contracts import SourceCandidateLibrarySaveRequest
 from backend.services.semantic_source_recall import (
     DEFAULT_FRAGMENT_PREVIEW_LIMIT,
-    EMBEDDING_MODEL,
-    EMBEDDING_VERSION,
     LocalSemanticIndex,
+    SemanticIndex,
     aggregate_semantic_support,
     chunk_source_text,
 )
-from backend.shared.errors import ApplicationError, ErrorCode
+from backend.shared.errors import ApplicationError, DependencyError, ErrorCode
+from backend.shared.logging import get_logger
 
 
 @dataclass(frozen=True)
@@ -102,9 +103,10 @@ class CandidateLibrarySaveResult:
 
 
 class SourceLibraryRepository:
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, semantic_index: SemanticIndex | None = None) -> None:
         self._database = database
-        self._semantic_index = LocalSemanticIndex()
+        self._semantic_index = semantic_index or LocalSemanticIndex()
+        self._logger = get_logger("backend.source_library")
 
     async def create_topic(self, request: SourceTopicCreateRequest) -> SourceTopicRecord:
         now = datetime.now(timezone.utc)
@@ -373,7 +375,38 @@ class SourceLibraryRepository:
         limit: int = 12,
         fragment_limit: int = DEFAULT_FRAGMENT_PREVIEW_LIMIT,
     ) -> SourceSemanticRecallResult:
+        started_at = perf_counter()
+        timings: dict[str, float] = {}
+
+        def record_timing(key: str, section_started_at: float) -> None:
+            timings[key] = round((perf_counter() - section_started_at) * 1000, 3)
+
+        def finish(
+            result: SourceSemanticRecallResult,
+            *,
+            global_source_count: int = 0,
+            candidate_count: int = 0,
+            fragment_count: int = 0,
+        ) -> SourceSemanticRecallResult:
+            self._logger.info(
+                "semantic_recommendations_completed",
+                extra={
+                    "case_id": case_id,
+                    "applied": result.applied,
+                    "reason": result.reason,
+                    "global_source_count": global_source_count,
+                    "candidate_count": candidate_count,
+                    "fragment_count": fragment_count,
+                    "matched_fragment_count": result.matched_fragment_count,
+                    "recommendation_count": len(result.entries),
+                    "timings_ms": timings,
+                    "duration_ms": round((perf_counter() - started_at) * 1000, 3),
+                },
+            )
+            return result
+
         async with self._database.session() as session:
+            section_started_at = perf_counter()
             crisis_case = await session.get(CrisisCaseRecord, case_id)
             if crisis_case is None:
                 raise ApplicationError(code=ErrorCode.NOT_FOUND, message="Case not found", status_code=404)
@@ -385,9 +418,11 @@ class SourceLibraryRepository:
             )
             case_topics = [(case_topic, topic) for case_topic, topic in case_topic_rows.all()]
             query_text = self._build_semantic_query(crisis_case, case_topics, query)
+            record_timing("query_build", section_started_at)
             if not query_text:
-                return SourceSemanticRecallResult(False, "empty_query", None, 0, 0, [])
+                return finish(SourceSemanticRecallResult(False, "empty_query", None, 0, 0, []))
 
+            section_started_at = perf_counter()
             source_rows = await session.execute(
                 select(GlobalSourceDocumentRecord)
                 .where(GlobalSourceDocumentRecord.source_status == "active")
@@ -402,31 +437,51 @@ class SourceLibraryRepository:
                 .limit(100)
             )
             candidates = list(candidate_rows.scalars().all())
-
-            for source in global_sources:
-                await self._refresh_global_source_fragments(session, source)
-            for candidate in candidates:
-                await self._refresh_candidate_source_fragments(session, candidate)
-            await session.flush()
+            record_timing("source_load", section_started_at)
 
             global_ids = [str(source.id) for source in global_sources]
             candidate_ids = [str(candidate.id) for candidate in candidates]
-            fragment_query = select(SourceFragmentRecord).where(SourceFragmentRecord.index_status == "indexed")
+            fragment_query = select(SourceFragmentRecord).where(
+                SourceFragmentRecord.index_status == "indexed",
+                SourceFragmentRecord.embedding_model == self._semantic_index.model,
+                SourceFragmentRecord.embedding_version == self._semantic_index.version,
+            )
             source_filters = []
             if global_ids:
                 source_filters.append(SourceFragmentRecord.global_source_id.in_(global_ids))
             if candidate_ids:
                 source_filters.append(SourceFragmentRecord.source_candidate_id.in_(candidate_ids))
             if not source_filters:
-                return SourceSemanticRecallResult(False, "no_sources", query_text, 0, 0, [])
+                return finish(
+                    SourceSemanticRecallResult(False, "no_sources", query_text, 0, 0, []),
+                    global_source_count=len(global_sources),
+                    candidate_count=len(candidates),
+                )
             fragment_query = fragment_query.where(or_(*source_filters))
 
+            section_started_at = perf_counter()
             fragment_rows = await session.execute(fragment_query.order_by(SourceFragmentRecord.fragment_index.asc()))
             fragments = list(fragment_rows.scalars().all())
+            record_timing("fragment_load", section_started_at)
             if not fragments:
-                return SourceSemanticRecallResult(False, "no_indexed_fragments", query_text, 0, 0, [])
+                return finish(
+                    SourceSemanticRecallResult(False, "no_indexed_fragments", query_text, 0, 0, []),
+                    global_source_count=len(global_sources),
+                    candidate_count=len(candidates),
+                )
 
-            query_vector = self._semantic_index.embed(query_text)
+            try:
+                section_started_at = perf_counter()
+                query_vector = await self._semantic_index.embed_text(query_text)
+                record_timing("query_embedding", section_started_at)
+            except DependencyError as exc:
+                return finish(
+                    SourceSemanticRecallResult(False, exc.code.value, query_text, len(fragments), 0, []),
+                    global_source_count=len(global_sources),
+                    candidate_count=len(candidates),
+                    fragment_count=len(fragments),
+                )
+            section_started_at = perf_counter()
             matches_by_source: dict[tuple[str, str], list[SourceFragmentMatch]] = {}
             for fragment in fragments:
                 similarity = self._semantic_index.similarity(query_vector, fragment.embedding_vector)
@@ -442,10 +497,17 @@ class SourceLibraryRepository:
                         similarity=similarity,
                     )
                 )
+            record_timing("similarity_scan", section_started_at)
 
             if not matches_by_source:
-                return SourceSemanticRecallResult(False, "no_matches", query_text, len(fragments), 0, [])
+                return finish(
+                    SourceSemanticRecallResult(False, "no_matches", query_text, len(fragments), 0, []),
+                    global_source_count=len(global_sources),
+                    candidate_count=len(candidates),
+                    fragment_count=len(fragments),
+                )
 
+            section_started_at = perf_counter()
             assignments = await self._assignments_for_sources(session, global_ids)
             usage_counts = await self._usage_counts(session, global_ids) if global_ids else {}
             attached_ids = await self._attached_source_ids(session, case_id, global_ids) if global_ids else set()
@@ -454,7 +516,9 @@ class SourceLibraryRepository:
             case_topic_ids = {str(topic.id) for _, topic in case_topics}
             source_by_id = {str(source.id): source for source in global_sources}
             candidate_by_id = {str(candidate.id): candidate for candidate in candidates}
+            record_timing("metadata_load", section_started_at)
 
+            section_started_at = perf_counter()
             entries: list[SourceSemanticRecommendationEntry] = []
             for (source_scope, source_id), matches in matches_by_source.items():
                 sorted_matches = sorted(matches, key=lambda item: item.similarity, reverse=True)
@@ -520,14 +584,117 @@ class SourceLibraryRepository:
                 )
 
             ranked = self._diversity_rerank(entries)[: max(1, limit)]
-            return SourceSemanticRecallResult(
-                applied=True,
-                reason=None,
-                query=query_text,
-                indexed_fragment_count=len(fragments),
-                matched_fragment_count=sum(len(matches) for matches in matches_by_source.values()),
-                entries=ranked,
+            record_timing("rank", section_started_at)
+            return finish(
+                SourceSemanticRecallResult(
+                    applied=True,
+                    reason=None,
+                    query=query_text,
+                    indexed_fragment_count=len(fragments),
+                    matched_fragment_count=sum(len(matches) for matches in matches_by_source.values()),
+                    entries=ranked,
+                ),
+                global_source_count=len(global_sources),
+                candidate_count=len(candidates),
+                fragment_count=len(fragments),
             )
+
+    async def index_stale_source_fragments(self, limit: int = 5) -> int:
+        if limit <= 0:
+            return 0
+        limit = min(limit, 50)
+        indexed_count = 0
+        async with self._database.session() as session:
+            stale_rows = await session.execute(
+                select(SourceFragmentRecord)
+                .where(SourceFragmentRecord.index_status.in_(["pending", "stale", "failed"]))
+                .order_by(SourceFragmentRecord.updated_at.asc())
+                .limit(limit)
+            )
+            stale_sources: list[tuple[str, str]] = []
+            seen: set[tuple[str, str]] = set()
+            for fragment in stale_rows.scalars().all():
+                source_id = str(fragment.global_source_id or fragment.source_candidate_id or "")
+                if not source_id:
+                    continue
+                key = (fragment.source_scope, source_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                stale_sources.append(key)
+
+            for source_scope, source_id in stale_sources:
+                if indexed_count >= limit:
+                    return indexed_count
+                indexed_count += await self._refresh_source_fragments_if_available(session, source_scope, source_id)
+
+            remaining = limit - indexed_count
+            if remaining <= 0:
+                return indexed_count
+
+            global_fragment_exists = (
+                select(SourceFragmentRecord.id)
+                .where(
+                    SourceFragmentRecord.source_scope == "global",
+                    SourceFragmentRecord.global_source_id == GlobalSourceDocumentRecord.id,
+                    SourceFragmentRecord.index_status == "indexed",
+                    SourceFragmentRecord.embedding_model == self._semantic_index.model,
+                    SourceFragmentRecord.embedding_version == self._semantic_index.version,
+                )
+                .exists()
+            )
+            global_rows = await session.execute(
+                select(GlobalSourceDocumentRecord)
+                .where(GlobalSourceDocumentRecord.source_status == "active")
+                .where(~global_fragment_exists)
+                .order_by(GlobalSourceDocumentRecord.updated_at.asc())
+                .limit(remaining)
+            )
+            for source in global_rows.scalars().all():
+                indexed_count += await self._refresh_source_with_error_capture(
+                    session,
+                    "global",
+                    str(source.id),
+                    lambda source=source: self._refresh_global_source_fragments(session, source),
+                )
+                if indexed_count >= limit:
+                    return indexed_count
+
+            remaining = limit - indexed_count
+            if remaining <= 0:
+                return indexed_count
+
+            candidate_fragment_exists = (
+                select(SourceFragmentRecord.id)
+                .where(
+                    SourceFragmentRecord.source_scope == "candidate",
+                    SourceFragmentRecord.source_candidate_id == SourceCandidateRecord.id,
+                    SourceFragmentRecord.index_status == "indexed",
+                    SourceFragmentRecord.embedding_model == self._semantic_index.model,
+                    SourceFragmentRecord.embedding_version == self._semantic_index.version,
+                )
+                .exists()
+            )
+            candidate_rows = await session.execute(
+                select(SourceCandidateRecord)
+                .where(or_(SourceCandidateRecord.content != "", SourceCandidateRecord.excerpt != ""))
+                .where(~candidate_fragment_exists)
+                .order_by(SourceCandidateRecord.updated_at.asc())
+                .limit(remaining)
+            )
+            for candidate in candidate_rows.scalars().all():
+                indexed_count += await self._refresh_source_with_error_capture(
+                    session,
+                    "candidate",
+                    str(candidate.id),
+                    lambda candidate=candidate: self._refresh_candidate_source_fragments(session, candidate),
+                )
+                if indexed_count >= limit:
+                    return indexed_count
+
+        if indexed_count:
+            self._logger.info("source_fragment_maintenance_indexed", extra={"indexed_source_count": indexed_count})
+        return indexed_count
 
     async def get_usage(self, global_source_id: str) -> tuple[
         GlobalSourceDocumentRecord,
@@ -738,6 +905,57 @@ class SourceLibraryRepository:
             content=candidate.content or candidate.excerpt,
         )
 
+    async def _refresh_source_fragments_if_available(
+        self,
+        session,
+        source_scope: str,
+        source_id: str,
+    ) -> int:
+        if source_scope == "global":
+            source = await session.get(GlobalSourceDocumentRecord, source_id)
+            if source is None:
+                return 0
+            return await self._refresh_source_with_error_capture(
+                session,
+                source_scope,
+                source_id,
+                lambda: self._refresh_global_source_fragments(session, source),
+            )
+        if source_scope == "candidate":
+            candidate = await session.get(SourceCandidateRecord, source_id)
+            if candidate is None:
+                return 0
+            return await self._refresh_source_with_error_capture(
+                session,
+                source_scope,
+                source_id,
+                lambda: self._refresh_candidate_source_fragments(session, candidate),
+            )
+        return 0
+
+    async def _refresh_source_with_error_capture(
+        self,
+        session,
+        source_scope: str,
+        source_id: str,
+        refresh,
+    ) -> int:
+        try:
+            await refresh()
+        except Exception as exc:  # pragma: no cover - defensive guard for worker maintenance.
+            now = datetime.now(timezone.utc)
+            await session.execute(
+                update(SourceFragmentRecord)
+                .where(*self._fragment_source_filters(source_scope, source_id))
+                .values(index_status="failed", updated_at=now, last_error=str(exc)[:500])
+            )
+            self._logger.warning(
+                "source_fragment_maintenance_failed",
+                extra={"source_scope": source_scope, "source_id": source_id, "error": str(exc)},
+            )
+            return 0
+        return 1
+
     async def _replace_fragments(
         self,
         session,
@@ -767,7 +985,7 @@ class SourceLibraryRepository:
 
         rows: list[SourceFragmentRecord] = []
         for fragment in text_fragments:
-            vector = self._semantic_index.embed(fragment.text)
+            vector = await self._semantic_index.embed_text(fragment.text)
             row = SourceFragmentRecord(
                 source_scope=source_scope,
                 global_source_id=source_id if source_scope == "global" else None,
@@ -775,8 +993,8 @@ class SourceLibraryRepository:
                 fragment_index=fragment.index,
                 fragment_text=fragment.text,
                 content_hash=fragment.content_hash,
-                embedding_model=EMBEDDING_MODEL,
-                embedding_version=EMBEDDING_VERSION,
+                embedding_model=self._semantic_index.model,
+                embedding_version=self._semantic_index.version,
                 embedding_vector=vector,
                 vector_index_id=f"{source_scope}:{source_id}:{fragment.index}",
                 index_status="indexed",
@@ -801,7 +1019,10 @@ class SourceLibraryRepository:
                 return False
             if row.content_hash != fragment.content_hash:
                 return False
-            if row.embedding_model != EMBEDDING_MODEL or row.embedding_version != EMBEDDING_VERSION:
+            if (
+                row.embedding_model != self._semantic_index.model
+                or row.embedding_version != self._semantic_index.version
+            ):
                 return False
             if row.index_status != "indexed" or not row.embedding_vector:
                 return False

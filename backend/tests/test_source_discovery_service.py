@@ -29,8 +29,10 @@ from backend.services.source_discovery_contracts import (
 )
 from backend.services.source_discovery_service import (
     BraveSearchProvider,
+    HttpContentFetcher,
     SearchResult,
     SourceDiscoveryService,
+    build_source_discovery_content_fetcher,
     build_source_discovery_search_provider,
 )
 from backend.services.source_library_service import SourceLibraryService
@@ -471,6 +473,43 @@ def test_search_provider_factory_selects_brave_and_requires_key():
                 brave_search_api_key="",
             )
         )
+
+
+def test_content_fetcher_factory_selects_http_by_default():
+    config = BackendConfig(
+        database_url="postgresql+asyncpg://localhost/db",
+        source_discovery_search_provider="brave",
+        brave_search_api_key="test-key",
+    )
+
+    assert isinstance(build_source_discovery_content_fetcher(config), HttpContentFetcher)
+
+
+def test_http_content_fetcher_extracts_page_text():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text="<html><head><script>ignore()</script></head><body><article><h1>Recall update</h1><p>Regulator confirmed the recall timeline.</p></article></body></html>",
+        )
+
+    fetcher = HttpContentFetcher(timeout_seconds=1, transport=httpx.MockTransport(handler))
+
+    content = asyncio.run(
+        fetcher.fetch(
+            SearchResult(
+                title="Recall update",
+                url="https://example.test/recall",
+                snippet="Fallback snippet",
+                source_type="official",
+                provider="brave",
+            )
+        )
+    )
+
+    assert content.metadata["fetch_status"] == "fetched"
+    assert "Regulator confirmed the recall timeline." in content.content
+    assert "ignore()" not in content.content
 
 
 def test_worker_pipeline_writes_deduped_candidates_with_scores_sorted():

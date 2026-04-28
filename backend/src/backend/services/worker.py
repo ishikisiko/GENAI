@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Dict, Iterable
 
-from backend.domain.models import Job, JobAttemptStatus, JobStatus
+from backend.domain.models import Job
 from backend.repository.job_repository import JobRepository
 from backend.shared.errors import ApplicationError
 from backend.shared.logging import correlation_context, get_logger
@@ -34,9 +34,13 @@ class WorkerRuntime:
     async def loop_once(self) -> bool:
         """Run at most one polling/execution cycle."""
         for task in self._maintenance_tasks:
-            recovered = await task()
+            try:
+                recovered = await task()
+            except Exception:  # pragma: no cover - keeps optional maintenance from stopping workers.
+                self._logger.exception("worker_maintenance_task_failed")
+                continue
             if recovered:
-                self._logger.warning("worker_recovered_stale_jobs", extra={"count": recovered})
+                self._logger.info("worker_maintenance_task_completed", extra={"count": recovered})
 
         job = await self._repository.claim_next_pending_job(self._worker_id)
         if job is None:
