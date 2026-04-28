@@ -8,8 +8,10 @@ import { fetchEvidencePack, startEvidencePackGrounding } from "../lib/backend";
 import { getErrorMessage } from "../lib/errors";
 import { supabase } from "../lib/supabase";
 import type { CrisisCase, EvidencePack, GraphExtractionSubmissionResponse } from "../lib/types";
+import { useI18n } from "../lib/i18n";
 
 export default function EvidencePackPreviewPage() {
+  const { t } = useI18n();
   const { caseId, packId } = useParams<{ caseId: string; packId: string }>();
   const navigate = useNavigate();
   const [crisisCase, setCrisisCase] = useState<CrisisCase | null>(null);
@@ -75,19 +77,19 @@ export default function EvidencePackPreviewPage() {
   return (
     <div className="min-h-full">
       <PageHeader
-        title="Evidence Pack"
+        title={t("evidence.title")}
         subtitle={crisisCase?.title}
         breadcrumbs={[
-          { label: "Dashboard", href: "/" },
-          { label: crisisCase?.title || "Case", href: `/cases/${caseId}/documents` },
-          { label: "Evidence Pack" },
+          { label: t("common.dashboard"), href: "/" },
+          { label: crisisCase?.title || t("common.case"), href: `/cases/${caseId}/documents` },
+          { label: t("evidence.title") },
         ]}
         action={pack && <PTag color={pack.status === "grounding_started" ? "notification-success-soft" : "background-frosted"}>{pack.status}</PTag>}
       />
 
       <div className="p-fluid-lg w-full">
         {error && (
-          <PInlineNotification heading="Error" description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
+          <PInlineNotification heading={t("common.error")} description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
         )}
 
         {!pack ? (
@@ -134,11 +136,11 @@ export default function EvidencePackPreviewPage() {
                 <div className="grid grid-cols-2 gap-static-xs">
                   <div className="bg-canvas rounded p-static-sm text-center">
                     <PText size="small" weight="semi-bold">{pack.source_count}</PText>
-                    <PText size="x-small" className="text-contrast-medium">Sources</PText>
+                    <PText size="x-small" className="text-contrast-medium">{t("evidence.sources")}</PText>
                   </div>
                   <div className="bg-canvas rounded p-static-sm text-center">
                     <PText size="small" weight="semi-bold">{pack.sources.filter((source) => source.source_document_id).length}</PText>
-                    <PText size="x-small" className="text-contrast-medium">Documents</PText>
+                    <PText size="x-small" className="text-contrast-medium">{t("evidence.documents")}</PText>
                   </div>
                 </div>
 
@@ -152,7 +154,7 @@ export default function EvidencePackPreviewPage() {
                   disabled={starting || pack.sources.length === 0}
                   onClick={startGrounding}
                 >
-                  Start Grounding
+                  {t("evidence.startGrounding")}
                 </PButton>
 
                 {groundingStatus && (
@@ -166,13 +168,13 @@ export default function EvidencePackPreviewPage() {
                       className="mt-static-sm"
                       onClick={() => navigate(`/cases/${caseId}/grounding`)}
                     >
-                      Open Grounding
+                      {t("nav.grounding")}
                     </PButton>
                   </div>
                 )}
 
                 <PButton variant="secondary" onClick={() => navigate(`/cases/${caseId}/documents`)}>
-                  Back to Documents
+                  {t("evidence.backToDocuments")}
                 </PButton>
               </div>
             </div>

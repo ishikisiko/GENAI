@@ -9,10 +9,12 @@ import { createSourceDiscoveryJob } from "../lib/backend";
 import { getErrorMessage } from "../lib/errors";
 import { supabase } from "../lib/supabase";
 import type { CrisisCase } from "../lib/types";
+import { useI18n } from "../lib/i18n";
 
 const SOURCE_TYPES = ["news", "official", "social", "complaint", "research"];
 
 export default function SourceDiscoverySetupPage() {
+  const { t } = useI18n();
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
   const [crisisCase, setCrisisCase] = useState<CrisisCase | null>(null);
@@ -92,12 +94,12 @@ export default function SourceDiscoverySetupPage() {
   return (
     <div className="min-h-full">
       <PageHeader
-        title="Source Discovery"
+        title={t("discovery.title")}
         subtitle={crisisCase?.title}
         breadcrumbs={[
-          { label: "Dashboard", href: "/" },
-          { label: crisisCase?.title || "Case", href: `/cases/${caseId}/documents` },
-          { label: "Source Discovery" },
+          { label: t("common.dashboard"), href: "/" },
+          { label: crisisCase?.title || t("common.case"), href: `/cases/${caseId}/documents` },
+          { label: t("discovery.title") },
         ]}
         action={crisisCase && <StatusBadge status={crisisCase.status} />}
       />
@@ -116,15 +118,15 @@ export default function SourceDiscoverySetupPage() {
 
         <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md flex flex-col gap-fluid-md">
           <div>
-            <PHeading size="small">Discovery Settings</PHeading>
+            <PHeading size="small">{t("discovery.settings")}</PHeading>
             <PText size="small" className="text-contrast-medium mt-static-xs">
-              Configure the topic and source boundaries before the worker builds candidate evidence.
+              {t("discovery.settingsDesc")}
             </PText>
           </div>
 
           <div className="grid grid-cols-1 gap-fluid-md lg:grid-cols-2">
             <label className="flex flex-col gap-static-xs lg:col-span-2">
-              <PText size="small" weight="semi-bold">Topic *</PText>
+              <PText size="small" weight="semi-bold">{t("discovery.topic")}</PText>
               <input
                 value={topic}
                 onChange={(event) => setTopic(event.target.value)}
@@ -134,7 +136,7 @@ export default function SourceDiscoverySetupPage() {
             </label>
 
             <label className="flex flex-col gap-static-xs lg:col-span-2">
-              <PText size="small" weight="semi-bold">Description</PText>
+              <PText size="small" weight="semi-bold">{t("discovery.description")}</PText>
               <textarea
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
@@ -145,7 +147,7 @@ export default function SourceDiscoverySetupPage() {
             </label>
 
             <label className="flex flex-col gap-static-xs">
-              <PText size="small" weight="semi-bold">Region</PText>
+              <PText size="small" weight="semi-bold">{t("discovery.region")}</PText>
               <input
                 value={region}
                 onChange={(event) => setRegion(event.target.value)}
@@ -156,7 +158,7 @@ export default function SourceDiscoverySetupPage() {
             </label>
 
             <label className="flex flex-col gap-static-xs">
-              <PText size="small" weight="semi-bold">Language</PText>
+              <PText size="small" weight="semi-bold">{t("discovery.language")}</PText>
               <input
                 value={language}
                 onChange={(event) => setLanguage(event.target.value)}
@@ -166,7 +168,7 @@ export default function SourceDiscoverySetupPage() {
             </label>
 
             <label className="flex flex-col gap-static-xs">
-              <PText size="small" weight="semi-bold">Time Range</PText>
+              <PText size="small" weight="semi-bold">{t("discovery.timeRange")}</PText>
               <select
                 value={timeRange}
                 onChange={(event) => setTimeRange(event.target.value)}
@@ -181,7 +183,7 @@ export default function SourceDiscoverySetupPage() {
             </label>
 
             <label className="flex flex-col gap-static-xs">
-              <PText size="small" weight="semi-bold">Max Sources</PText>
+              <PText size="small" weight="semi-bold">{t("discovery.maxSources")}</PText>
               <input
                 type="number"
                 min={1}
@@ -195,7 +197,7 @@ export default function SourceDiscoverySetupPage() {
           </div>
 
           <div>
-            <PText size="small" weight="semi-bold" className="mb-static-xs">Source Types</PText>
+            <PText size="small" weight="semi-bold" className="mb-static-xs">{t("discovery.sourceTypes")}</PText>
             <div className="flex flex-wrap gap-static-sm">
               {SOURCE_TYPES.map((type) => (
                 <button
@@ -219,10 +221,10 @@ export default function SourceDiscoverySetupPage() {
 
           <div className="border-t border-contrast-low pt-fluid-sm flex flex-wrap gap-static-sm">
             <PButton loading={submitting} disabled={submitting || !topic.trim()} icon="arrow-right" onClick={submit}>
-              Create Discovery Job
+              {t("discovery.createJob")}
             </PButton>
             <PButton variant="secondary" onClick={() => navigate(`/cases/${caseId}/documents`)}>
-              Back
+              {t("common.back")}
             </PButton>
           </div>
         </div>

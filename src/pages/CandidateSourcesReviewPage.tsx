@@ -15,6 +15,7 @@ import {
 import { getErrorMessage } from "../lib/errors";
 import { supabase } from "../lib/supabase";
 import type { CandidateReviewStatus, CrisisCase, SourceCandidate, SourceDiscoveryJobResponse, SourceTopic } from "../lib/types";
+import { useI18n } from "../lib/i18n";
 
 const REVIEW_COLORS: Record<CandidateReviewStatus, "background-frosted" | "notification-success-soft" | "notification-error-soft"> = {
   pending: "background-frosted",
@@ -23,6 +24,7 @@ const REVIEW_COLORS: Record<CandidateReviewStatus, "background-frosted" | "notif
 };
 
 export default function CandidateSourcesReviewPage() {
+  const { t } = useI18n();
   const { caseId, jobId } = useParams<{ caseId: string; jobId: string }>();
   const navigate = useNavigate();
   const [crisisCase, setCrisisCase] = useState<CrisisCase | null>(null);
@@ -167,23 +169,23 @@ export default function CandidateSourcesReviewPage() {
   return (
     <div className="min-h-full">
       <PageHeader
-        title="Candidate Sources"
+        title={t("candidate.title")}
         subtitle={crisisCase?.title}
         breadcrumbs={[
-          { label: "Dashboard", href: "/" },
-          { label: crisisCase?.title || "Case", href: `/cases/${caseId}/documents` },
-          { label: "Source Discovery", href: `/cases/${caseId}/source-discovery` },
-          { label: "Review" },
+          { label: t("common.dashboard"), href: "/" },
+          { label: crisisCase?.title || t("common.case"), href: `/cases/${caseId}/documents` },
+          { label: t("discovery.title"), href: `/cases/${caseId}/source-discovery` },
+          { label: t("candidate.review") },
         ]}
         action={job && <PTag color={statusColor}>{job.status}</PTag>}
       />
 
       <div className="p-fluid-lg w-full">
         {error && (
-          <PInlineNotification heading="Error" description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
+          <PInlineNotification heading={t("common.error")} description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
         )}
         {success && (
-          <PInlineNotification heading="Success" description={success} state="success" dismissButton className="mb-fluid-md" onDismiss={() => setSuccess("")} />
+          <PInlineNotification heading={t("common.success")} description={success} state="success" dismissButton className="mb-fluid-md" onDismiss={() => setSuccess("")} />
         )}
 
         <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-5">
@@ -233,7 +235,7 @@ export default function CandidateSourcesReviewPage() {
                       disabled={Boolean(updatingId)}
                       onClick={() => void updateReview(candidate, "accepted")}
                     >
-                      Accept
+                      {t("candidate.accept")}
                     </PButton>
                     <PButton
                       variant="secondary"
@@ -241,7 +243,7 @@ export default function CandidateSourcesReviewPage() {
                       disabled={Boolean(updatingId)}
                       onClick={() => void updateReview(candidate, "rejected")}
                     >
-                      Reject
+                      {t("candidate.reject")}
                     </PButton>
                   </div>
                 </div>
@@ -249,7 +251,7 @@ export default function CandidateSourcesReviewPage() {
                 {candidate.review_status === "accepted" && (
                   <div className="mt-static-sm bg-canvas rounded p-static-sm flex flex-col gap-static-sm lg:flex-row lg:items-end">
                     <label className="flex flex-col gap-static-xs flex-1">
-                      <PText size="small" weight="semi-bold">Save to Library</PText>
+                      <PText size="small" weight="semi-bold">{t("candidate.saveToLibrary")}</PText>
                       <select
                         value={candidateTopicSelections[candidate.id] || ""}
                         onChange={(event) => setCandidateTopicSelections((current) => ({
@@ -271,7 +273,7 @@ export default function CandidateSourcesReviewPage() {
                       disabled={Boolean(savingLibraryId)}
                       onClick={() => void saveCandidate(candidate)}
                     >
-                      Save
+                      {t("common.save")}
                     </PButton>
                   </div>
                 )}
@@ -311,7 +313,7 @@ export default function CandidateSourcesReviewPage() {
                 {(candidate.claim_previews.length > 0 || candidate.stakeholder_previews.length > 0) && (
                   <div className="grid grid-cols-1 gap-static-sm mt-static-sm lg:grid-cols-2">
                     <div>
-                      <PText size="small" weight="semi-bold" className="mb-static-xs">Claims</PText>
+                      <PText size="small" weight="semi-bold" className="mb-static-xs">{t("candidate.claims")}</PText>
                       <div className="flex flex-col gap-static-xs">
                         {candidate.claim_previews.slice(0, 2).map((claim, index) => (
                           <PText key={index} size="small" className="text-contrast-medium">{String(claim.text || "")}</PText>
@@ -319,7 +321,7 @@ export default function CandidateSourcesReviewPage() {
                       </div>
                     </div>
                     <div>
-                      <PText size="small" weight="semi-bold" className="mb-static-xs">Stakeholders</PText>
+                      <PText size="small" weight="semi-bold" className="mb-static-xs">{t("candidate.stakeholders")}</PText>
                       <div className="flex gap-static-xs flex-wrap">
                         {candidate.stakeholder_previews.slice(0, 5).map((stakeholder, index) => (
                           <PTag key={index} color="background-frosted">{String(stakeholder.name || "")}</PTag>

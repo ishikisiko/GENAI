@@ -11,6 +11,7 @@ import { getErrorMessage } from "../lib/errors";
 import { generateAgents as requestAgentGeneration, BackendApiError } from "../lib/backend";
 import { supabase } from "../lib/supabase";
 import type { CrisisCase, Entity, Relation, Claim } from "../lib/types";
+import { useI18n } from "../lib/i18n";
 
 type IconName = NonNullable<ComponentProps<typeof PIcon>["name"]>;
 type TagColor = NonNullable<ComponentProps<typeof PTag>["color"]>;
@@ -37,6 +38,7 @@ const CLAIM_TYPE_COLORS: Record<string, TagColor> = {
 };
 
 export default function GroundingPage() {
+  const { t } = useI18n();
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
 
@@ -144,15 +146,15 @@ export default function GroundingPage() {
   const entityById = (id: string | null) => entities.find((e) => e.id === id);
 
   const tabs = [
-    { key: "entities" as const, label: "Entities", count: entities.length, icon: "group" },
-    { key: "relations" as const, label: "Relations", count: relations.length, icon: "linked" },
-    { key: "claims" as const, label: "Claims", count: claims.length, icon: "document" },
+    { key: "entities" as const, label: t("grounding.entities"), count: entities.length, icon: "group" },
+    { key: "relations" as const, label: t("grounding.relations"), count: relations.length, icon: "linked" },
+    { key: "claims" as const, label: t("grounding.claims"), count: claims.length, icon: "document" },
   ] satisfies { key: "entities" | "relations" | "claims"; label: string; count: number; icon: IconName }[];
 
   const summaryStats = [
-    { label: "Entities", value: entities.length, icon: "group" },
-    { label: "Relations", value: relations.length, icon: "linked" },
-    { label: "Claims", value: claims.length, icon: "document" },
+    { label: t("grounding.entities"), value: entities.length, icon: "group" },
+    { label: t("grounding.relations"), value: relations.length, icon: "linked" },
+    { label: t("grounding.claims"), value: claims.length, icon: "document" },
   ] satisfies { label: string; value: number; icon: IconName }[];
 
   if (loading) return (
@@ -204,15 +206,15 @@ export default function GroundingPage() {
   return (
     <div className="min-h-full">
       <PageHeader
-        title="GraphRAG Grounding"
+        title={t("grounding.title")}
         subtitle={crisisCase?.title}
-        breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: crisisCase?.title || "Case" }, { label: "Grounding" }]}
+        breadcrumbs={[{ label: t("common.dashboard"), href: "/" }, { label: crisisCase?.title || t("common.case") }, { label: t("nav.grounding") }]}
         action={crisisCase && <StatusBadge status={crisisCase.status} />}
       />
 
       <div className="p-fluid-lg w-full">
         {error && (
-          <PInlineNotification heading="Error" description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
+          <PInlineNotification heading={t("common.error")} description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
         )}
 
         {isEmpty ? (
@@ -296,7 +298,7 @@ export default function GroundingPage() {
 
             <div className="xl:col-span-1">
               <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md flex flex-col gap-fluid-sm xl:sticky xl:top-fluid-md">
-                <PHeading size="small">Graph Summary</PHeading>
+                <PHeading size="small">{t("grounding.summary")}</PHeading>
                 <div className="grid grid-cols-1 gap-static-sm sm:grid-cols-3 xl:grid-cols-1">
                   {summaryStats.map((s) => (
                     <div key={s.label} className="flex items-center justify-between bg-canvas rounded p-static-sm">
@@ -321,14 +323,14 @@ export default function GroundingPage() {
                   icon="arrow-right"
                   onClick={handleGenerateAgents}
                 >
-                  {generating ? "Generating..." : "Generate Agents"}
+                  {generating ? `${t("grounding.generateAgents")}...` : t("grounding.generateAgents")}
                 </PButton>
 
                 <PButtonPure
                   icon="arrow-left"
                   onClick={() => navigate(`/cases/${caseId}/documents`)}
                 >
-                  Back to Documents
+                  {t("grounding.backToDocuments")}
                 </PButtonPure>
               </div>
             </div>

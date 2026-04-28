@@ -10,10 +10,12 @@ import { getErrorMessage } from "../lib/errors";
 import { supabase } from "../lib/supabase";
 import { seedDemo, isDemoAlreadySeeded, DEMO_CASE_ID } from "../lib/seedDemo";
 import type { CrisisCase } from "../lib/types";
+import { useI18n } from "../lib/i18n";
 
 type IconName = NonNullable<ComponentProps<typeof PIcon>["name"]>;
 
 export default function Dashboard() {
+  const { t } = useI18n();
   const [cases, setCases] = useState<CrisisCase[]>([]);
   const [loading, setLoading] = useState(true);
   const [demoLoading, setDemoLoading] = useState(false);
@@ -67,23 +69,23 @@ export default function Dashboard() {
   };
 
   const getNextStepLabel = (c: CrisisCase) => {
-    if (c.status === "draft") return "Add Documents";
-    if (c.status === "grounded") return "Review Grounding";
-    if (c.status === "agents_ready") return "Run Simulation";
-    return "View Results";
+    if (c.status === "draft") return t("documents.addToCase");
+    if (c.status === "grounded") return t("nav.grounding");
+    if (c.status === "agents_ready") return t("simulation.runBaseline");
+    return t("dashboard.viewDemo");
   };
 
   const dashboardStats = [
-    { label: "Total Cases", value: cases.length, icon: "document" },
-    { label: "Simulated", value: cases.filter((c) => c.status === "simulated").length, icon: "chart" },
-    { label: "In Progress", value: cases.filter((c) => c.status !== "simulated").length, icon: "clock" },
+    { label: t("dashboard.totalCases"), value: cases.length, icon: "document" },
+    { label: t("dashboard.simulated"), value: cases.filter((c) => c.status === "simulated").length, icon: "chart" },
+    { label: t("dashboard.inProgress"), value: cases.filter((c) => c.status !== "simulated").length, icon: "clock" },
   ] satisfies { label: string; value: number; icon: IconName }[];
 
   return (
     <div className="min-h-full">
       <PageHeader
-        title="Crisis Response Simulator"
-        subtitle="Build and compare response strategies for any crisis scenario"
+        title={t("dashboard.title")}
+        subtitle={t("dashboard.subtitle")}
         action={
           <div className="flex items-center gap-static-sm">
             {demoExists ? (
@@ -91,7 +93,7 @@ export default function Dashboard() {
                 icon="ai-spark"
                 onClick={() => navigate(`/cases/${DEMO_CASE_ID}/comparison`)}
               >
-                View Demo
+                {t("dashboard.viewDemo")}
               </PButtonPure>
             ) : (
               <PButtonPure
@@ -99,11 +101,11 @@ export default function Dashboard() {
                 onClick={handleLoadDemo}
                 loading={demoLoading}
               >
-                Load Demo
+                {t("dashboard.loadDemo")}
               </PButtonPure>
             )}
             <PButton icon="add" onClick={() => navigate("/cases/new")}>
-              New Crisis Case
+              {t("dashboard.newCase")}
             </PButton>
           </div>
         }
@@ -132,15 +134,15 @@ export default function Dashboard() {
               <PIcon name="chart" size="large" color="contrast-medium" />
             </div>
             <div>
-              <PHeading size="medium" className="mb-static-xs">No crisis cases yet</PHeading>
+              <PHeading size="medium" className="mb-static-xs">{t("dashboard.noCases")}</PHeading>
               <PText className="text-contrast-medium max-w-sm">
-                Create your first crisis scenario to start testing response strategies with AI-grounded simulation.
+                {t("dashboard.noCasesDesc")}
               </PText>
             </div>
 
             <div className="flex flex-col sm:flex-row items-center gap-static-sm">
               <PButton icon="add" onClick={() => navigate("/cases/new")}>
-                Create First Case
+                {t("dashboard.createFirst")}
               </PButton>
               <PButton
                 variant="secondary"
@@ -148,7 +150,7 @@ export default function Dashboard() {
                 onClick={handleLoadDemo}
                 loading={demoLoading}
               >
-                {demoLoading ? "Loading Demo..." : "Load Demo Simulation"}
+                {demoLoading ? `${t("dashboard.loadDemo")}...` : t("dashboard.loadDemoSimulation")}
               </PButton>
             </div>
 
@@ -156,9 +158,9 @@ export default function Dashboard() {
               <div className="flex gap-static-sm">
                 <PIcon name="information" color="contrast-medium" />
                 <div>
-                  <PText size="small" weight="semi-bold" className="mb-static-xs">What does the demo show?</PText>
+                  <PText size="small" weight="semi-bold" className="mb-static-xs">{t("dashboard.demoInfoTitle")}</PText>
                   <PText size="small" className="text-contrast-medium">
-                    A complete pre-built simulation of the NutriPlus protein bar contamination crisis — including 3 diverging response strategies (Apology, Clarification, Baseline) across 5 rounds with 4 AI agent types. No API key required.
+                    {t("dashboard.demoInfoDesc")}
                   </PText>
                 </div>
               </div>

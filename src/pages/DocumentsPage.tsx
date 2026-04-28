@@ -24,6 +24,7 @@ import type {
   SourceDocument,
   SourceOrigin,
 } from "../lib/types";
+import { useI18n } from "../lib/i18n";
 
 type TagColor = NonNullable<ComponentProps<typeof PTag>["color"]>;
 
@@ -52,6 +53,7 @@ interface DocumentsPageData {
 }
 
 export default function DocumentsPage() {
+  const { t } = useI18n();
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
 
@@ -375,18 +377,18 @@ export default function DocumentsPage() {
   return (
     <div className="min-h-full">
       <PageHeader
-        title="Source Documents"
+        title={t("documents.title")}
         subtitle={crisisCase?.title}
-        breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: crisisCase?.title || "Case", href: `/cases/${caseId}/documents` }, { label: "Documents" }]}
+        breadcrumbs={[{ label: t("common.dashboard"), href: "/" }, { label: crisisCase?.title || t("common.case"), href: `/cases/${caseId}/documents` }, { label: t("nav.documents") }]}
         action={crisisCase && <StatusBadge status={crisisCase.status} />}
       />
 
       <div className="p-fluid-lg w-full">
         {error && (
-          <PInlineNotification heading="Error" description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
+          <PInlineNotification heading={t("common.error")} description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
         )}
         {success && (
-          <PInlineNotification heading="Success" description={success} state="success" dismissButton className="mb-fluid-md" onDismiss={() => setSuccess("")} />
+          <PInlineNotification heading={t("common.success")} description={success} state="success" dismissButton className="mb-fluid-md" onDismiss={() => setSuccess("")} />
         )}
 
         <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-5">
@@ -394,22 +396,22 @@ export default function DocumentsPage() {
             <div className="bg-surface border border-contrast-low rounded-lg overflow-hidden">
               <div className="px-fluid-md py-static-md border-b border-contrast-low flex flex-col gap-static-sm lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <PHeading size="small">Case Documents</PHeading>
+                  <PHeading size="small">{t("documents.caseDocuments")}</PHeading>
                   <PText size="small" className="text-contrast-medium">
-                    Direct uploads are attached to this case and automatically synced into the global library.
+                    {t("documents.caseDocumentsDesc")}
                   </PText>
                 </div>
                 <PButtonPure icon="add" onClick={() => setShowUploadForm((current) => !current)}>
-                  Add to Case
+                  {t("documents.addToCase")}
                 </PButtonPure>
               </div>
 
               {showUploadForm && (
                 <div className="p-fluid-md border-b border-contrast-low flex flex-col gap-fluid-sm">
-                  <PHeading size="small">Upload Into This Case</PHeading>
+                  <PHeading size="small">{t("documents.uploadTitle")}</PHeading>
 
                   <div>
-                    <PText size="small" weight="semi-bold" className="mb-static-xs">Document Type</PText>
+                    <PText size="small" weight="semi-bold" className="mb-static-xs">{t("documents.type")}</PText>
                     <div className="flex gap-static-sm flex-wrap">
                       {DOC_TYPES.map((type) => (
                         <button
@@ -429,7 +431,7 @@ export default function DocumentsPage() {
                   </div>
 
                   <div>
-                    <PText size="small" weight="semi-bold" className="mb-static-xs">Title (optional)</PText>
+                    <PText size="small" weight="semi-bold" className="mb-static-xs">{t("documents.titleOptional")}</PText>
                     <input
                       value={docTitle}
                       onChange={(event) => setDocTitle(event.target.value)}
@@ -440,7 +442,7 @@ export default function DocumentsPage() {
                   </div>
 
                   <div>
-                    <PText size="small" weight="semi-bold" className="mb-static-xs">Content *</PText>
+                    <PText size="small" weight="semi-bold" className="mb-static-xs">{t("documents.content")}</PText>
                     <textarea
                       value={docContent}
                       onChange={(event) => setDocContent(event.target.value)}
@@ -453,10 +455,10 @@ export default function DocumentsPage() {
 
                   <div className="flex gap-static-sm">
                     <PButton loading={addingCaseUpload} disabled={addingCaseUpload || !docContent.trim()} onClick={addCaseDocument}>
-                      Add and Sync Globally
+                      {t("documents.addAndSync")}
                     </PButton>
                     <PButton variant="secondary" onClick={() => setShowUploadForm(false)}>
-                      Cancel
+                      {t("common.cancel")}
                     </PButton>
                   </div>
                 </div>
@@ -465,9 +467,9 @@ export default function DocumentsPage() {
               {documents.length === 0 ? (
                 <div className="p-fluid-lg flex flex-col items-center gap-static-md text-center">
                   <PIcon name="document" size="large" color="contrast-medium" />
-                  <PText className="text-contrast-medium">No documents in this case yet.</PText>
+                  <PText className="text-contrast-medium">{t("documents.empty")}</PText>
                   <PButton icon="add" variant="secondary" onClick={() => setShowUploadForm(true)}>
-                    Add First Case Document
+                    {t("documents.addFirst")}
                   </PButton>
                 </div>
               ) : (
@@ -500,7 +502,7 @@ export default function DocumentsPage() {
             <div className="bg-surface border border-contrast-low rounded-lg overflow-hidden">
               <div className="px-fluid-md py-static-md border-b border-contrast-low flex flex-col gap-static-sm lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <PHeading size="small">Add from Source Registry</PHeading>
+                  <PHeading size="small">{t("documents.addFromRegistry")}</PHeading>
                   <PText size="small" className="text-contrast-medium">
                     Start with recommended and same-topic sources, then search globally when needed.
                   </PText>
@@ -514,7 +516,7 @@ export default function DocumentsPage() {
                     {selectedGlobalSourceIds.length === 0 ? "Add Selected" : `Add Selected (${selectedGlobalSourceIds.length})`}
                   </PButton>
                   <PButton variant="secondary" icon="document" onClick={() => navigate("/sources")}>
-                    Open Library
+                    {t("documents.openLibrary")}
                   </PButton>
                 </div>
               </div>

@@ -14,6 +14,7 @@ import {
 } from "../lib/backend";
 import { getErrorMessage } from "../lib/errors";
 import type { SourceRegistrySource, SourceTopic, SourceUsageResponse } from "../lib/types";
+import { useI18n } from "../lib/i18n";
 
 type TagColor = NonNullable<ComponentProps<typeof PTag>["color"]>;
 
@@ -49,6 +50,7 @@ function viewKey(view: View): string {
 }
 
 export default function GlobalSourcesPage() {
+  const { t } = useI18n();
   const [topics, setTopics] = useState<SourceTopic[]>([]);
   const [sources, setSources] = useState<SourceRegistrySource[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState("");
@@ -225,22 +227,22 @@ export default function GlobalSourcesPage() {
   return (
     <div className="min-h-full">
       <PageHeader
-        title="Global Source Library"
-        subtitle="Organize reusable source material by topic, maintenance view, and usage context."
-        breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Source Library" }]}
+        title={t("sources.title")}
+        subtitle={t("sources.subtitle")}
+        breadcrumbs={[{ label: t("common.dashboard"), href: "/" }, { label: t("nav.sourceLibrary") }]}
         action={(
           <PButton icon="add" onClick={() => setShowTopicForm((current) => !current)}>
-            New Topic
+            {t("sources.newTopic")}
           </PButton>
         )}
       />
 
       <div className="p-fluid-lg w-full flex flex-col gap-fluid-md">
         {error && (
-          <PInlineNotification heading="Error" description={error} state="error" dismissButton onDismiss={() => setError("")} />
+          <PInlineNotification heading={t("common.error")} description={error} state="error" dismissButton onDismiss={() => setError("")} />
         )}
         {success && (
-          <PInlineNotification heading="Success" description={success} state="success" dismissButton onDismiss={() => setSuccess("")} />
+          <PInlineNotification heading={t("common.success")} description={success} state="success" dismissButton onDismiss={() => setSuccess("")} />
         )}
 
         {showTopicForm && (
@@ -270,20 +272,20 @@ export default function GlobalSourcesPage() {
               </select>
             </label>
             <PButton disabled={!topicName.trim()} onClick={addTopic}>Create Topic</PButton>
-            <PButton variant="secondary" onClick={() => setShowTopicForm(false)}>Cancel</PButton>
+            <PButton variant="secondary" onClick={() => setShowTopicForm(false)}>{t("common.cancel")}</PButton>
           </div>
         )}
 
         <div className="grid grid-cols-1 gap-fluid-md items-start xl:grid-cols-6">
           <aside className="bg-surface border border-contrast-low rounded-lg p-static-sm flex flex-col gap-static-md xl:col-span-1">
             <div>
-              <PText size="small" weight="semi-bold" className="mb-static-xs">Smart Views</PText>
+              <PText size="small" weight="semi-bold" className="mb-static-xs">{t("sources.smartViews")}</PText>
               <div className="flex flex-wrap gap-static-xs xl:flex-col">
                 <button
                   className={`text-left rounded px-static-sm py-static-xs ${viewKey(view) === "all" ? "bg-primary text-[white]" : "hover:bg-canvas"}`}
                   onClick={() => setView({ type: "all" })}
                 >
-                  All Sources
+                  {t("sources.allSources")}
                 </button>
                 {SMART_VIEWS.map((smartView) => (
                   <button
@@ -299,7 +301,7 @@ export default function GlobalSourcesPage() {
             </div>
 
             <div>
-              <PText size="small" weight="semi-bold" className="mb-static-xs">Topics</PText>
+              <PText size="small" weight="semi-bold" className="mb-static-xs">{t("sources.topics")}</PText>
               <div className="flex flex-wrap gap-static-xs max-h-[420px] overflow-auto pr-static-xs xl:flex-col">
                 {topics.map((topic) => (
                   <button
@@ -318,7 +320,7 @@ export default function GlobalSourcesPage() {
           <section className="bg-surface border border-contrast-low rounded-lg overflow-hidden xl:col-span-3">
             <div className="p-fluid-md border-b border-contrast-low grid grid-cols-1 gap-static-sm sm:grid-cols-2 2xl:grid-cols-5">
               <label className="flex flex-col gap-static-xs sm:col-span-2 2xl:col-span-5">
-                <PText size="small" weight="semi-bold">Search Registry</PText>
+                <PText size="small" weight="semi-bold">{t("sources.searchRegistry")}</PText>
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
@@ -349,7 +351,7 @@ export default function GlobalSourcesPage() {
               ))}
               <div className="flex items-end">
                 <PButton variant="secondary" className="w-full" onClick={() => void loadSources()}>
-                  Refresh
+                  {t("common.refresh")}
                 </PButton>
               </div>
             </div>
@@ -380,7 +382,7 @@ export default function GlobalSourcesPage() {
                       {source.topic_assignments.slice(0, 3).map((assignment) => (
                         <PTag key={assignment.assignment_id} color="background-frosted">{assignment.topic_name}</PTag>
                       ))}
-                      {source.topic_assignments.length === 0 && <PTag color="notification-warning-soft">Unassigned</PTag>}
+                      {source.topic_assignments.length === 0 && <PTag color="notification-warning-soft">{t("common.unassigned")}</PTag>}
                     </div>
                   </button>
                 ))}

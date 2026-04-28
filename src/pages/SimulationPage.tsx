@@ -21,6 +21,7 @@ import type {
   StrategyType,
 } from "../lib/types";
 import { AGENT_ROLE_LABELS, AGENT_ROLE_COLORS, STRATEGY_LABELS, STRATEGY_DESCRIPTIONS, STRATEGY_ICONS } from "../lib/constants";
+import { useI18n } from "../lib/i18n";
 
 type IconName = NonNullable<ComponentProps<typeof PIcon>["name"]>;
 
@@ -79,6 +80,7 @@ function isActiveRun(run: SimulationRun) {
 }
 
 export default function SimulationPage() {
+  const { t } = useI18n();
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
 
@@ -303,15 +305,15 @@ export default function SimulationPage() {
   return (
     <div className="min-h-full">
       <PageHeader
-        title="Simulation"
+        title={t("simulation.title")}
         subtitle={crisisCase?.title}
-        breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: crisisCase?.title || "Case" }, { label: "Simulation" }]}
+        breadcrumbs={[{ label: t("common.dashboard"), href: "/" }, { label: crisisCase?.title || t("common.case") }, { label: t("nav.simulation") }]}
         action={
           <div className="flex items-center gap-static-sm">
             {crisisCase && <StatusBadge status={crisisCase.status} />}
             {hasBaseline && (
               <PButton icon="compare" variant="secondary" onClick={() => navigate(`/cases/${caseId}/comparison`)}>
-                View Comparison
+                {t("simulation.viewComparison")}
               </PButton>
             )}
           </div>
@@ -320,7 +322,7 @@ export default function SimulationPage() {
 
       <div className="w-full p-fluid-lg">
         {error && (
-          <PInlineNotification heading="Error" description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
+          <PInlineNotification heading={t("common.error")} description={error} state="error" dismissButton className="mb-fluid-md" onDismiss={() => setError("")} />
         )}
 
         {agents.length === 0 ? (
@@ -335,7 +337,7 @@ export default function SimulationPage() {
           <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-[minmax(28rem,0.9fr)_minmax(0,1.55fr)] 2xl:grid-cols-[minmax(34rem,0.85fr)_minmax(0,1.75fr)]">
             <div className="flex flex-col gap-fluid-md">
               <div>
-                <PHeading size="small" className="mb-fluid-sm">Stakeholder Agents</PHeading>
+                <PHeading size="small" className="mb-fluid-sm">{t("simulation.stakeholderAgents")}</PHeading>
                 <div className="grid grid-cols-1 gap-static-sm md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                   {agents.map((a) => <AgentCard key={a.id} agent={a} />)}
                 </div>
@@ -344,7 +346,7 @@ export default function SimulationPage() {
               <PDivider />
 
               <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md flex flex-col gap-fluid-sm">
-                <PHeading size="small">Run Baseline</PHeading>
+                <PHeading size="small">{t("simulation.runBaseline")}</PHeading>
                 <PText size="small" className="text-contrast-medium">
                   Simulate {baselineTotalRounds} rounds with no intervention — establishes the natural crisis trajectory.
                 </PText>
@@ -392,7 +394,7 @@ export default function SimulationPage() {
               </div>
 
               <div className="bg-surface border border-notification-warning rounded-lg p-fluid-md flex flex-col gap-fluid-sm">
-                <PHeading size="small">Inject Strategy</PHeading>
+                <PHeading size="small">{t("simulation.injectStrategy")}</PHeading>
 
                 <div>
                   <PText size="small" weight="semi-bold" className="mb-static-xs">Strategy Type</PText>
@@ -499,7 +501,7 @@ export default function SimulationPage() {
             </div>
 
             <div className="min-w-0 flex flex-col gap-fluid-md">
-              <PHeading size="small">Simulation Logs</PHeading>
+              <PHeading size="small">{t("simulation.logs")}</PHeading>
 
               {runs.length === 0 && !runningBaseline && !runningIntervention ? (
                 <div className="bg-surface border border-contrast-low rounded-lg p-fluid-lg flex flex-col items-center gap-static-md text-center">

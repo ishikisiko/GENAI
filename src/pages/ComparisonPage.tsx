@@ -17,6 +17,7 @@ import type {
 import { STRATEGY_LABELS, AGENT_ROLE_LABELS, AGENT_ROLE_COLORS } from "../lib/constants";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
+import { useI18n } from "../lib/i18n";
 
 type IconName = NonNullable<ComponentProps<typeof PIcon>["name"]>;
 
@@ -124,6 +125,7 @@ const ROLE_ICONS: Record<AgentResponse["role"], IconName> = {
 };
 
 export default function ComparisonPage() {
+  const { t } = useI18n();
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
 
@@ -198,14 +200,14 @@ export default function ComparisonPage() {
   return (
     <div className="min-h-full">
       <PageHeader
-        title="Strategy Comparison"
+        title={t("comparison.title")}
         subtitle={crisisCase?.title}
-        breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: crisisCase?.title || "Case" }, { label: "Comparison" }]}
+        breadcrumbs={[{ label: t("common.dashboard"), href: "/" }, { label: crisisCase?.title || t("common.case") }, { label: t("nav.comparison") }]}
         action={
           <div className="flex items-center gap-static-sm">
             {crisisCase && <StatusBadge status={crisisCase.status} />}
             <PButton icon="chart" variant="secondary" onClick={() => navigate(`/cases/${caseId}/simulation`)}>
-              Back to Simulation
+              {t("comparison.backToSimulation")}
             </PButton>
           </div>
         }
@@ -236,7 +238,7 @@ export default function ComparisonPage() {
 
             {baselineData && interventionRuns.length > 0 && (
               <PInlineNotification
-                heading="Strategy Verdict"
+                heading={t("comparison.verdict")}
                 description={generateVerdict(baselineData, interventionRuns)}
                 state="success"
                 dismissButton={false}
@@ -268,7 +270,7 @@ export default function ComparisonPage() {
 
             <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md">
               <div className="flex items-center justify-between mb-fluid-sm flex-wrap gap-static-sm">
-                <PHeading size="small">Trajectory Comparison</PHeading>
+                <PHeading size="small">{t("comparison.trajectory")}</PHeading>
                 <div className="flex gap-static-xs flex-wrap">
                   {metricTabs.map((tab) => (
                     <button
@@ -345,7 +347,7 @@ export default function ComparisonPage() {
 
             <div className="bg-surface border border-contrast-low rounded-lg overflow-hidden">
               <div className="px-fluid-md py-static-md border-b border-contrast-low">
-                <PHeading size="small">Agent-Level Response Breakdown</PHeading>
+                <PHeading size="small">{t("comparison.agentBreakdown")}</PHeading>
               </div>
               <div className="divide-y divide-contrast-low">
                 {allRuns.map((rd) => (
