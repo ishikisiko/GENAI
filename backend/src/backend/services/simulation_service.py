@@ -199,12 +199,13 @@ class SimulationService:
 
         previous_narrative = "The crisis has just emerged publicly. Initial reactions are forming."
         previous_sentiment = -0.3
+        key_facts = "".join(f"- [{claim.claim_type}] {claim.content}\n" for claim in claims[:8])
 
         crisis_context = f"""
 Crisis: {crisis_case.title or "Unknown Crisis"}
 
 Key Facts:
-{"".join(f"- [{claim.claim_type}] {claim.content}\n" for claim in claims[:8])}
+{key_facts}
 
 Key Entities: {", ".join(f"{entity.name} ({entity.entity_type})" for entity in entities)}
 """.strip()

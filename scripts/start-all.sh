@@ -89,11 +89,12 @@ start_service() {
   info "Starting ${name}; log: ${log_file}"
   (
     cd "${cwd}"
-    "$@"
-  ) >>"${log_file}" 2>&1 &
+    setsid "$@" >>"${log_file}" 2>&1 < /dev/null &
+    printf '%s\n' "$!" >"${pid_file}"
+  )
 
-  local pid=$!
-  printf '%s\n' "${pid}" >"${pid_file}"
+  local pid
+  pid="$(cat "${pid_file}")"
   sleep 2
 
   if ! kill -0 "${pid}" 2>/dev/null; then
@@ -104,8 +105,7 @@ start_service() {
 }
 
 command -v npm >/dev/null 2>&1 || fail "npm is required."
-require_file "${ROOT_DIR}/.env.local" "Copy .env.local.example to .env.local and fill Supabase values."
-require_file "${ROOT_DIR}/backend/.env" "Copy backend/.env.example to backend/.env and set APP_DATABASE_URL."
+require_file "${ROOT_DIR}/.env.local" "Copy .env.local.example to .env.local and fill frontend/backend values."
 detect_supabase_port_conflict
 
 info "Starting local Supabase stack..."

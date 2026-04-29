@@ -41,3 +41,5 @@ def test_candidate_review_page_can_render_semantic_candidate_explanations():
     assert "candidate.semantic_support" in content
     assert "candidate.matched_fragments" in content
     assert "candidate.ranking_reasons" in content
+    assert "attachGlobalSourceToCase" in content
+    assert "candidate.addToCaseDocuments" in content

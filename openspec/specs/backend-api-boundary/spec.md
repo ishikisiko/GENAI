@@ -127,3 +127,39 @@ The system SHALL expose Python API response contracts for semantically supported
 - **WHEN** a source recommendation is based on candidate source content
 - **THEN** the Python API response preserves candidate identity and review status
 - **AND** the response does not represent the candidate as attached to the case or accepted into an evidence pack unless the existing human review workflow has confirmed it
+
+### Requirement: Source discovery assistant API endpoint
+The system SHALL expose Python API contracts for bounded source discovery assistant requests and structured assistant responses.
+
+#### Scenario: Search planning request is submitted
+- **WHEN** the frontend sends a source discovery assistant request in search planning mode with case and discovery form context
+- **THEN** the Python API returns a structured assistant response containing planning guidance, suggested search directions, and any form-applicable suggestions
+- **AND** the response does not require the frontend to call an LLM provider directly
+- **AND** the request does not create a source discovery job unless the user later submits the existing source discovery form
+
+#### Scenario: Source interpretation request is submitted
+- **WHEN** the frontend sends a source discovery assistant request in source interpretation mode for a discovery job
+- **THEN** the Python API assembles grounding context from the current discovery job and its candidate sources
+- **AND** the Python API returns a structured assistant response containing answer text and any available timeline items, event stages, source conflicts, evidence gaps, follow-up search directions, and citations
+- **AND** successful completion does not require the frontend to query Supabase, an LLM provider, an embedding provider, or a vector index directly
+
+#### Scenario: Assistant request fails
+- **WHEN** a source discovery assistant request fails because the mode is invalid, required context is missing, the discovery job is not found, LLM configuration is unavailable, or the LLM request fails
+- **THEN** the Python API returns the shared product error envelope with a stable machine-readable error code, human-readable message, and request correlation data
+
+### Requirement: Search-backed briefing API contract
+The system SHALL expose Python API behavior for search-backed source briefing without requiring the frontend to call search, content fetch, LLM, or storage providers directly.
+
+#### Scenario: Search-backed briefing request is submitted
+- **WHEN** the frontend sends a source discovery assistant request in search-backed briefing mode with topic or case context
+- **THEN** the Python API executes bounded search and content gathering through backend-owned providers
+- **AND** the Python API returns a structured briefing response with citations, preliminary timeline, source summaries, evidence gaps, follow-up searches, and recommended discovery settings when available
+- **AND** the response does not require the frontend to call an external search provider, content fetcher, LLM provider, or database directly
+
+#### Scenario: Briefing request is invalid
+- **WHEN** a search-backed briefing request is missing topic and case context, asks for unsupported limits, or references invalid mode data
+- **THEN** the Python API returns the shared product error envelope with a stable validation error code and request correlation data
+
+#### Scenario: Briefing request completes
+- **WHEN** a search-backed briefing request completes successfully
+- **THEN** the API does not create a source discovery job, source candidate, evidence pack, graph extraction job, or simulation run as a side effect

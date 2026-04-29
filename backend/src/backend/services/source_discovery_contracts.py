@@ -218,3 +218,110 @@ class EvidencePackCreateResponse(BaseModel):
 class EvidencePackGroundingResponse(GraphExtractionSubmissionResponse):
     evidence_pack_id: str
     materialized_document_count: int
+
+
+class SourceDiscoveryAssistantRequest(BaseModel):
+    mode: str
+    question: str = ""
+    case_id: str | None = None
+    discovery_job_id: str | None = None
+    topic: str = ""
+    description: str = ""
+    region: str = ""
+    language: str = "en"
+    time_range: str = ""
+    source_types: list[str] = Field(default_factory=list)
+    max_sources: int | None = Field(default=None, ge=1, le=50)
+
+
+class SourceDiscoveryAssistantCitation(BaseModel):
+    candidate_id: str | None = None
+    title: str
+    url: str | None = None
+    published_at: str | None = None
+    quote: str = ""
+
+
+class SourceDiscoveryAssistantPlanningSuggestion(BaseModel):
+    label: str
+    rationale: str = ""
+    topic: str | None = None
+    description: str | None = None
+    region: str | None = None
+    language: str | None = None
+    time_range: str | None = None
+    source_types: list[str] = Field(default_factory=list)
+    queries: list[str] = Field(default_factory=list)
+
+
+class SourceDiscoveryAssistantRecommendedSettings(BaseModel):
+    topic: str | None = None
+    description: str | None = None
+    region: str | None = None
+    language: str | None = None
+    time_range: str | None = None
+    source_types: list[str] = Field(default_factory=list)
+    max_sources: int | None = Field(default=None, ge=1, le=50)
+    queries: list[str] = Field(default_factory=list)
+
+
+class SourceDiscoveryAssistantSourceSummary(BaseModel):
+    title: str
+    url: str | None = None
+    source_type: str = "news"
+    provider: str = ""
+    published_at: str | None = None
+    summary: str = ""
+    citation: SourceDiscoveryAssistantCitation | None = None
+
+
+class SourceDiscoveryAssistantBriefingLimit(BaseModel):
+    max_queries: int
+    max_results_per_query: int
+    max_total_sources: int
+    max_content_chars_per_source: int
+
+
+class SourceDiscoveryAssistantTimelineItem(BaseModel):
+    event_date: str | None = None
+    reporting_date: str | None = None
+    title: str
+    summary: str
+    citations: list[SourceDiscoveryAssistantCitation] = Field(default_factory=list)
+
+
+class SourceDiscoveryAssistantEventStage(BaseModel):
+    name: str
+    summary: str
+    confidence: Literal["low", "medium", "high"] = "low"
+    citations: list[SourceDiscoveryAssistantCitation] = Field(default_factory=list)
+
+
+class SourceDiscoveryAssistantSourceConflict(BaseModel):
+    summary: str
+    sides: list[str] = Field(default_factory=list)
+    citations: list[SourceDiscoveryAssistantCitation] = Field(default_factory=list)
+
+
+class SourceDiscoveryAssistantEvidenceGap(BaseModel):
+    summary: str
+    follow_up_searches: list[str] = Field(default_factory=list)
+
+
+class SourceDiscoveryAssistantResponse(BaseModel):
+    outcome: Literal["completed"] = "completed"
+    mode: Literal["search_planning", "source_interpretation", "search_backed_briefing"]
+    answer: str
+    insufficient_evidence: bool = False
+    planning_suggestions: list[SourceDiscoveryAssistantPlanningSuggestion] = Field(default_factory=list)
+    recommended_settings: SourceDiscoveryAssistantRecommendedSettings | None = None
+    source_summaries: list[SourceDiscoveryAssistantSourceSummary] = Field(default_factory=list)
+    key_actors: list[str] = Field(default_factory=list)
+    controversy_focus: list[str] = Field(default_factory=list)
+    briefing_limits: SourceDiscoveryAssistantBriefingLimit | None = None
+    timeline: list[SourceDiscoveryAssistantTimelineItem] = Field(default_factory=list)
+    event_stages: list[SourceDiscoveryAssistantEventStage] = Field(default_factory=list)
+    citations: list[SourceDiscoveryAssistantCitation] = Field(default_factory=list)
+    conflicts: list[SourceDiscoveryAssistantSourceConflict] = Field(default_factory=list)
+    evidence_gaps: list[SourceDiscoveryAssistantEvidenceGap] = Field(default_factory=list)
+    follow_up_searches: list[str] = Field(default_factory=list)

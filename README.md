@@ -24,16 +24,15 @@ https://supabase.com/docs/guides/local-development
 npm install
 ```
 
-2. Copy the frontend env template:
+2. Copy the unified local env template:
 
 ```bash
 cp .env.local.example .env.local
 ```
 
-3. Copy the backend and function secrets templates:
+3. Copy the function secrets template only if you need compatibility Edge Functions:
 
 ```bash
-cp backend/.env.example backend/.env
 cp supabase/functions/.env.example supabase/functions/.env
 ```
 
@@ -56,8 +55,9 @@ npm run supabase:status
   - `VITE_SUPABASE_ANON_KEY=<local anon key>`
   - `VITE_BACKEND_API_BASE=http://127.0.0.1:8000`
   - `VITE_BACKEND_URL=http://127.0.0.1:8000` (`VITE_BACKEND_API_BASE` is preferred; `VITE_BACKEND_URL` is kept as a compatibility alias)
-- `backend/.env`
-  - `APP_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres`
+  - `APP_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres`
+  - `SUPABASE_URL=http://127.0.0.1:54321`
+  - `SUPABASE_ANON_KEY=<local anon key>`
   - `LLM_API_KEY=<your LLM key>`
   - `LLM_MODEL=<your model, default gpt-4o-mini>`
   - `LLM_BASE_URL=<OpenAI-compatible base URL, default https://api.openai.com/v1>`
@@ -71,7 +71,11 @@ npm run supabase:status
   - `SEMANTIC_EMBEDDING_API_KEY=<embedding API key, falls back to LLM_API_KEY or OPENAI_API_KEY>`
 - `supabase/functions/.env`
   - Only needed when serving compatibility Edge Functions.
-  - Keep the LLM fields aligned with `backend/.env` if you use those shims.
+  - Keep the LLM fields aligned with `.env.local` if you use those shims.
+
+The Python backend loads root `.env`, then root `.env.local`, then optional
+`backend/.env`. Use `.env.local` as the single local source of truth; keep
+`backend/.env` only when you deliberately need a backend-only override.
 
 Supabase reserves environment names that start with `SUPABASE_` for Edge
 Functions, so do not put `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` in
@@ -138,7 +142,7 @@ This reapplies the SQL files under [supabase/migrations](/root/code/Genai/supaba
 ## Notes
 
 - `supabase/config.toml` is included so the repo is ready for local CLI usage.
-- The frontend uses `.env.local`, so you do not need to overwrite the existing `.env` that points at the hosted project.
+- The frontend and Python backend both read root `.env.local` for local development.
 - The local stack still requires an OpenAI-compatible LLM configuration if you want Python-owned graph extraction and simulation to actually generate outputs.
 - The compatibility Edge Functions are optional and also use the same LLM config from their secrets.
 - The product-facing backend boundary is the Python API. The retained Edge Functions are compatibility-only rollback shims:

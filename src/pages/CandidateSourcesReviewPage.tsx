@@ -4,7 +4,10 @@ import {
   PButton, PHeading, PIcon, PInlineNotification, PSpinner, PTag, PText,
 } from "@porsche-design-system/components-react";
 import PageHeader from "../components/PageHeader";
+import SourceDiscoveryAssistantPanel from "../components/SourceDiscoveryAssistantPanel";
 import {
+  attachGlobalSourceToCase,
+  BackendApiError,
   createEvidencePack,
   fetchSourceTopics,
   fetchSourceCandidates,
@@ -34,6 +37,7 @@ export default function CandidateSourcesReviewPage() {
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState("");
   const [savingLibraryId, setSavingLibraryId] = useState("");
+  const [addingCaseDocumentId, setAddingCaseDocumentId] = useState("");
   const [creatingPack, setCreatingPack] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -144,6 +148,37 @@ export default function CandidateSourcesReviewPage() {
     setSavingLibraryId("");
   }
 
+  async function addCandidateToCaseDocuments(candidate: SourceCandidate) {
+    if (!caseId) return;
+    setAddingCaseDocumentId(candidate.id);
+    setError("");
+    setSuccess("");
+    try {
+      const topicId = candidateTopicSelections[candidate.id] || null;
+      const saved = await saveSourceCandidateToLibrary(candidate.id, {
+        topic_id: topicId,
+        reason: topicId ? "Saved and added to this case from review." : "Saved and added to this case as Unassigned.",
+        assigned_by: "user",
+      });
+      try {
+        await attachGlobalSourceToCase({
+          case_id: caseId,
+          global_source_id: saved.global_source_id,
+          topic_id: saved.topic_id,
+          assignment_id: saved.topic_assignment_id,
+        });
+      } catch (attachError: unknown) {
+        if (!(attachError instanceof BackendApiError && attachError.status === 409)) {
+          throw attachError;
+        }
+      }
+      setSuccess("Candidate saved to the source library and added to this case's documents.");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, "Failed to add candidate to this case."));
+    }
+    setAddingCaseDocumentId("");
+  }
+
   async function createPack() {
     if (!caseId || !jobId) return;
     setCreatingPack(true);
@@ -212,7 +247,11 @@ export default function CandidateSourcesReviewPage() {
                 )}
               </div>
             ) : candidates.map((candidate) => (
-              <div key={candidate.id} className="bg-surface border border-contrast-low rounded-lg p-fluid-sm">
+              <div
+                key={candidate.id}
+                id={`candidate-${candidate.id}`}
+                className="bg-surface border border-contrast-low rounded-lg p-fluid-sm scroll-mt-fluid-lg"
+              >
                 <div className="flex flex-col gap-static-md lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-static-xs flex-wrap mb-static-xs">
@@ -270,10 +309,17 @@ export default function CandidateSourcesReviewPage() {
                     <PButton
                       variant="secondary"
                       loading={savingLibraryId === candidate.id}
-                      disabled={Boolean(savingLibraryId)}
+                      disabled={Boolean(savingLibraryId) || Boolean(addingCaseDocumentId)}
                       onClick={() => void saveCandidate(candidate)}
                     >
                       {t("common.save")}
+                    </PButton>
+                    <PButton
+                      loading={addingCaseDocumentId === candidate.id}
+                      disabled={Boolean(savingLibraryId) || Boolean(addingCaseDocumentId)}
+                      onClick={() => void addCandidateToCaseDocuments(candidate)}
+                    >
+                      {t("candidate.addToCaseDocuments")}
                     </PButton>
                   </div>
                 )}
@@ -371,9 +417,29 @@ export default function CandidateSourcesReviewPage() {
               >
                 Create Evidence Pack
               </PButton>
+              <PText size="small" className="text-contrast-medium">
+                {t("candidate.acceptedNextDesc")}
+              </PText>
               <PButton variant="secondary" onClick={() => navigate(`/cases/${caseId}/source-discovery`)}>
                 New Discovery
               </PButton>
+              <PButton variant="secondary" onClick={() => navigate(`/cases/${caseId}/documents`)}>
+                Back to Documents
+              </PButton>
+            </div>
+
+            <div className="mt-fluid-md">
+              <SourceDiscoveryAssistantPanel
+                title="LLM Source Assistant"
+                description="Ask for a grounded timeline, current stage, conflicts, evidence gaps, or follow-up searches based on these candidates."
+                defaultQuestion="Summarize the known event timeline, current stage, conflicts, evidence gaps, and useful follow-up searches."
+                primaryActionLabel="Analyze Sources"
+                buildRequest={(question) => ({
+                  mode: "source_interpretation",
+                  question,
+                  discovery_job_id: jobId,
+                })}
+              />
             </div>
           </div>
         </div>

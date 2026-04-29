@@ -488,6 +488,115 @@ export interface EvidencePackGroundingResponse extends GraphExtractionSubmission
   materialized_document_count: number;
 }
 
+export type SourceDiscoveryAssistantMode = "search_planning" | "source_interpretation" | "search_backed_briefing";
+
+export interface SourceDiscoveryAssistantRequest {
+  mode: SourceDiscoveryAssistantMode;
+  question?: string;
+  case_id?: string | null;
+  discovery_job_id?: string | null;
+  topic?: string;
+  description?: string;
+  region?: string;
+  language?: string;
+  time_range?: string;
+  source_types?: string[];
+  max_sources?: number | null;
+}
+
+export interface SourceDiscoveryAssistantCitation {
+  candidate_id: string | null;
+  title: string;
+  url: string | null;
+  published_at: string | null;
+  quote: string;
+}
+
+export interface SourceDiscoveryAssistantPlanningSuggestion {
+  label: string;
+  rationale: string;
+  topic: string | null;
+  description: string | null;
+  region: string | null;
+  language: string | null;
+  time_range: string | null;
+  source_types: string[];
+  queries: string[];
+}
+
+export interface SourceDiscoveryAssistantRecommendedSettings {
+  topic: string | null;
+  description: string | null;
+  region: string | null;
+  language: string | null;
+  time_range: string | null;
+  source_types: string[];
+  max_sources: number | null;
+  queries: string[];
+}
+
+export interface SourceDiscoveryAssistantSourceSummary {
+  title: string;
+  url: string | null;
+  source_type: string;
+  provider: string;
+  published_at: string | null;
+  summary: string;
+  citation: SourceDiscoveryAssistantCitation | null;
+}
+
+export interface SourceDiscoveryAssistantBriefingLimit {
+  max_queries: number;
+  max_results_per_query: number;
+  max_total_sources: number;
+  max_content_chars_per_source: number;
+}
+
+export interface SourceDiscoveryAssistantTimelineItem {
+  event_date: string | null;
+  reporting_date: string | null;
+  title: string;
+  summary: string;
+  citations: SourceDiscoveryAssistantCitation[];
+}
+
+export interface SourceDiscoveryAssistantEventStage {
+  name: string;
+  summary: string;
+  confidence: "low" | "medium" | "high";
+  citations: SourceDiscoveryAssistantCitation[];
+}
+
+export interface SourceDiscoveryAssistantSourceConflict {
+  summary: string;
+  sides: string[];
+  citations: SourceDiscoveryAssistantCitation[];
+}
+
+export interface SourceDiscoveryAssistantEvidenceGap {
+  summary: string;
+  follow_up_searches: string[];
+}
+
+export interface SourceDiscoveryAssistantResponse {
+  outcome: "completed";
+  mode: SourceDiscoveryAssistantMode;
+  answer: string;
+  insufficient_evidence: boolean;
+  planning_suggestions: SourceDiscoveryAssistantPlanningSuggestion[];
+  recommended_settings: SourceDiscoveryAssistantRecommendedSettings | null;
+  source_summaries: SourceDiscoveryAssistantSourceSummary[];
+  key_actors: string[];
+  controversy_focus: string[];
+  briefing_limits: SourceDiscoveryAssistantBriefingLimit | null;
+  timeline: SourceDiscoveryAssistantTimelineItem[];
+  event_stages: SourceDiscoveryAssistantEventStage[];
+  citations: SourceDiscoveryAssistantCitation[];
+  conflicts: SourceDiscoveryAssistantSourceConflict[];
+  evidence_gaps: SourceDiscoveryAssistantEvidenceGap[];
+  follow_up_searches: string[];
+}
+
 export interface SourceCandidateLibrarySaveResponse {
   outcome: "saved";
   candidate_id: string;

@@ -14,6 +14,8 @@ import type {
   SimulationSubmissionResponse,
   SourceCandidate,
   SourceCandidateLibrarySaveResponse,
+  SourceDiscoveryAssistantRequest,
+  SourceDiscoveryAssistantResponse,
   SourceDiscoveryJobResponse,
   SourceDocumentSnapshotResponse,
   SourceRegistryListResponse,
@@ -224,6 +226,15 @@ export async function createSourceDiscoveryJob(
 
 export async function fetchSourceDiscoveryJob(jobId: string): Promise<SourceDiscoveryJobResponse> {
   return requestBackend<SourceDiscoveryJobResponse>(normalizeStatusPath(jobId, "/api/source-discovery/jobs"));
+}
+
+export async function askSourceDiscoveryAssistant(
+  payload: SourceDiscoveryAssistantRequest,
+): Promise<SourceDiscoveryAssistantResponse> {
+  return requestBackend<SourceDiscoveryAssistantResponse>("/api/source-discovery/assistant", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export interface FetchSourceCandidatesParams {

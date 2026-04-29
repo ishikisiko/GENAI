@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from fastapi.testclient import TestClient
 
 from backend.entrypoints.api.main import create_app
 from backend.services.source_discovery_contracts import (
     EvidencePackCreateRequest,
+    SourceDiscoveryAssistantRequest,
     SourceCandidateLibrarySaveRequest,
     SourceCandidateReviewRequest,
     SourceDiscoveryJobCreateRequest,
@@ -168,6 +170,85 @@ class _FakeSourceDiscoveryService:
                 }
 
         return _Response()
+
+
+class _FakeSourceDiscoveryAssistantService:
+    async def answer(self, request):
+        class _Response:
+            def model_dump(self):
+                return {
+                    "outcome": "completed",
+                    "mode": request.mode,
+                    "answer": "Use official and news sources first.",
+                    "insufficient_evidence": False,
+                    "planning_suggestions": [
+                        {
+                            "label": "Official timeline",
+                            "rationale": "Find primary chronology.",
+                            "topic": "Product recall timeline",
+                            "description": None,
+                            "region": None,
+                            "language": None,
+                            "time_range": None,
+                            "source_types": ["official"],
+                            "queries": ["product recall official timeline"],
+                        }
+                    ],
+                    "timeline": [],
+                    "event_stages": [],
+                    "citations": [],
+                    "conflicts": [],
+                    "evidence_gaps": [],
+                    "follow_up_searches": ["product recall latest update"],
+                    "recommended_settings": {
+                        "topic": "Product recall timeline",
+                        "description": "Initial briefing",
+                        "region": "US",
+                        "language": "en",
+                        "time_range": "last_30_days",
+                        "source_types": ["official", "news"],
+                        "max_sources": 12,
+                        "queries": ["product recall official timeline"],
+                    }
+                    if request.mode == "search_backed_briefing"
+                    else None,
+                    "source_summaries": [
+                        {
+                            "title": "Official timeline",
+                            "url": "https://example.test/timeline",
+                            "source_type": "official",
+                            "provider": "fake",
+                            "published_at": None,
+                            "summary": "Briefing source summary.",
+                            "citation": {
+                                "candidate_id": None,
+                                "title": "Official timeline",
+                                "url": "https://example.test/timeline",
+                                "published_at": None,
+                                "quote": "timeline",
+                            },
+                        }
+                    ]
+                    if request.mode == "search_backed_briefing"
+                    else [],
+                    "key_actors": ["Regulator"] if request.mode == "search_backed_briefing" else [],
+                    "controversy_focus": ["Timeline"] if request.mode == "search_backed_briefing" else [],
+                    "briefing_limits": {
+                        "max_queries": 4,
+                        "max_results_per_query": 4,
+                        "max_total_sources": 8,
+                        "max_content_chars_per_source": 1200,
+                    }
+                    if request.mode == "search_backed_briefing"
+                    else None,
+                }
+
+        return _Response()
+
+
+class _FailingSourceDiscoveryAssistantService:
+    async def answer(self, request):
+        raise ApplicationError(code=ErrorCode.VALIDATION_ERROR, message="Invalid briefing request", status_code=400)
 
 
 class _FakeSourceLibraryService:
@@ -367,6 +448,19 @@ def _build_app():
         repository=_FakeRepo(),
         simulation_service=_FakeSimulationService(),
         source_discovery_service=_FakeSourceDiscoveryService(),
+        source_discovery_assistant_service=_FakeSourceDiscoveryAssistantService(),
+        source_library_service=_FakeSourceLibraryService(),
+    )
+
+
+def _build_app_with_assistant(assistant_service):
+    return create_app(
+        _build_config(),
+        database=_FakeDb(),
+        repository=_FakeRepo(),
+        simulation_service=_FakeSimulationService(),
+        source_discovery_service=_FakeSourceDiscoveryService(),
+        source_discovery_assistant_service=assistant_service,
         source_library_service=_FakeSourceLibraryService(),
     )
 
@@ -425,6 +519,58 @@ def test_candidate_and_evidence_pack_endpoints_are_wired():
     assert updated["review_status"] == "accepted"
     assert pack["evidence_pack_id"] == "pack-123"
     assert grounding["job_type"] == "graph.extract"
+
+
+def test_source_discovery_assistant_endpoint_is_wired():
+    endpoint = _get_endpoint(_build_app(), "/api/source-discovery/assistant", "POST")
+
+    response = asyncio.run(
+        endpoint(
+            SourceDiscoveryAssistantRequest(
+                mode="search_planning",
+                case_id="case-123",
+                topic="Product recall",
+            )
+        )
+    )
+
+    assert response["mode"] == "search_planning"
+    assert response["planning_suggestions"][0]["queries"] == ["product recall official timeline"]
+
+
+def test_source_discovery_assistant_endpoint_supports_search_backed_briefing():
+    endpoint = _get_endpoint(_build_app(), "/api/source-discovery/assistant", "POST")
+
+    response = asyncio.run(
+        endpoint(
+            SourceDiscoveryAssistantRequest(
+                mode="search_backed_briefing",
+                case_id="case-123",
+                topic="Product recall",
+            )
+        )
+    )
+
+    assert response["mode"] == "search_backed_briefing"
+    assert response["recommended_settings"]["queries"] == ["product recall official timeline"]
+    assert response["source_summaries"][0]["citation"]["title"] == "Official timeline"
+
+
+def test_source_discovery_assistant_endpoint_uses_product_error_envelope():
+    app = _build_app_with_assistant(_FailingSourceDiscoveryAssistantService())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/source-discovery/assistant",
+            json={"mode": "search_backed_briefing"},
+            headers={"x-request-id": "request-123"},
+        )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert payload["error"]["message"] == "Invalid briefing request"
+    assert payload["error"]["request_id"] == "request-123"
 
 
 def test_source_library_topic_and_registry_endpoints_are_wired():

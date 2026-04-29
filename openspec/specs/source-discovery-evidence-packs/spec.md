@@ -147,3 +147,42 @@ The system SHALL allow user-confirmed discovery candidates to be saved into the 
 - **WHEN** a source candidate has a rejected review status
 - **THEN** the system does not offer it as an automatic source registry promotion
 - **AND** no global source or topic assignment is created from that rejection
+
+### Requirement: Source discovery assistant frontend integration
+The system SHALL expose the source discovery assistant from source discovery setup and candidate source review without bypassing existing human review controls.
+
+#### Scenario: User opens source discovery setup
+- **WHEN** the user opens `SourceDiscoverySetupPage` for a crisis case
+- **THEN** the page provides access to the assistant in search planning mode
+- **AND** the assistant can use the current case title, case description, topic, description, region, language, time range, and selected source types as planning context
+- **AND** assistant suggestions require explicit user action before changing discovery form fields or creating a source discovery job
+
+#### Scenario: User reviews discovered candidates
+- **WHEN** the user opens `CandidateSourcesReviewPage` for a discovery job
+- **THEN** the page provides access to the assistant in source interpretation mode
+- **AND** the assistant can use the discovery job settings and current candidate sources as grounding context
+- **AND** the page displays assistant citations in a way that lets the user identify the supporting candidate sources
+
+#### Scenario: Assistant does not replace review controls
+- **WHEN** the assistant provides timeline, stage, conflict, evidence-gap, or follow-up-search guidance
+- **THEN** candidate accept and reject controls remain the only way to change candidate review status
+- **AND** evidence pack creation remains available only through the existing explicit evidence pack action
+
+### Requirement: Search-backed briefing frontend integration
+The system SHALL expose search-backed briefing from source discovery setup as a user-triggered assistant action.
+
+#### Scenario: User opens source discovery setup
+- **WHEN** the user opens `SourceDiscoverySetupPage`
+- **THEN** the page provides a distinct action to request a search-backed initial briefing
+- **AND** the page distinguishes search-backed briefing from non-search search planning guidance
+- **AND** the page does not automatically run briefing before the user triggers that action
+
+#### Scenario: Briefing results are displayed
+- **WHEN** search-backed briefing completes
+- **THEN** the page displays preliminary timeline, key actors, stage summary, source citations, evidence gaps, follow-up searches, and recommended discovery settings when present
+- **AND** citations identify the searched sources used by the briefing
+
+#### Scenario: Recommended settings are applied
+- **WHEN** the user applies briefing recommendations to the discovery form
+- **THEN** the form fields update from the selected recommendation
+- **AND** the page does not create a source discovery job until the user submits the existing discovery form

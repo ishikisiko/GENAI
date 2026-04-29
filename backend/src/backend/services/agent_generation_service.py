@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from backend.services.agent_generation_contracts import AgentGenerationRequest, AgentGenerationResponse, GeneratedAgent
 from backend.services.llm_client import LlmJsonClient
 from backend.repository.simulation_repository import SimulationRepository
-from backend.shared.errors import ApplicationError, ErrorCode
+from backend.shared.errors import ApplicationError, DependencyError, ErrorCode
 from backend.shared.logging import get_logger
 
 
@@ -71,7 +72,16 @@ For each agent return:
 Return ONLY a valid JSON object with key "agents" containing the array."""
 
         extracted = await self._llm_client.chat_json(prompt=prompt, temperature=0.7, max_retries=3)
-        payload = LlmAgentBundle.model_validate(extracted)
+        try:
+            payload = LlmAgentBundle.model_validate(self._normalize_llm_payload(extracted))
+        except ValidationError as exc:
+            raise DependencyError(
+                "llm",
+                details={
+                    "reason": "LLM returned invalid agent payload",
+                    "validation_errors": exc.errors(include_url=False),
+                },
+            ) from exc
 
         if len(payload.agents) != 4:
             raise ApplicationError(
@@ -109,7 +119,7 @@ Return ONLY a valid JSON object with key "agents" containing the array."""
                 "case_id": request.case_id,
                 "agent_count": len(payload.agents),
                 "case_status": "agents_ready",
-                "at": datetime.utcnow().isoformat(),
+                "at": datetime.now(timezone.utc).isoformat(),
             },
         )
 
@@ -118,3 +128,72 @@ Return ONLY a valid JSON object with key "agents" containing the array."""
             case_status="agents_ready",
             agents=payload.agents,
         )
+
+    @classmethod
+    def _normalize_llm_payload(cls, raw_payload: Any) -> dict[str, Any]:
+        if not isinstance(raw_payload, dict):
+            raise DependencyError("llm", details={"reason": "LLM returned non-object JSON"})
+        agents = raw_payload.get("agents")
+        if not isinstance(agents, list):
+            raise DependencyError("llm", details={"reason": "LLM response is missing agents array"})
+        return {"agents": [cls._normalize_agent(agent) for agent in agents if isinstance(agent, dict)]}
+
+    @classmethod
+    def _normalize_agent(cls, agent: dict[str, Any]) -> dict[str, Any]:
+        role = cls._normalize_role(agent.get("role") or agent.get("type") or agent.get("stakeholder_type"))
+        stance = agent.get("stance") or agent.get("stanc") or agent.get("position") or agent.get("attitude")
+        concern = agent.get("concern") or agent.get("primary_concern") or agent.get("main_concern")
+        persona = (
+            agent.get("persona_description")
+            or agent.get("description")
+            or agent.get("persona")
+            or f"{role or 'Stakeholder'} participant in the crisis conversation."
+        )
+        return {
+            **agent,
+            "role": role,
+            "stance": str(stance or "Undetermined stance"),
+            "concern": str(concern or "Needs more information before reacting."),
+            "emotional_sensitivity": cls._normalize_score(agent.get("emotional_sensitivity")),
+            "spread_tendency": cls._normalize_score(agent.get("spread_tendency")),
+            "persona_description": str(persona),
+            "initial_beliefs": cls._normalize_beliefs(agent.get("initial_beliefs") or agent.get("beliefs")),
+        }
+
+    @staticmethod
+    def _normalize_role(value: Any) -> str:
+        normalized = str(value or "").strip().lower().replace(" ", "_")
+        aliases = {
+            "customer": "consumer",
+            "affected_consumer": "consumer",
+            "loyalist": "supporter",
+            "brand_supporter": "supporter",
+            "activist": "critic",
+            "skeptic": "critic",
+            "skeptical_journalist": "critic",
+            "journalist": "media",
+            "reporter": "media",
+            "news_media": "media",
+        }
+        return aliases.get(normalized, normalized)
+
+    @staticmethod
+    def _normalize_score(value: Any) -> int:
+        try:
+            return min(max(int(float(value)), 1), 10)
+        except (TypeError, ValueError):
+            return 5
+
+    @classmethod
+    def _normalize_beliefs(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        values = value if isinstance(value, list) else [value]
+        beliefs: list[str] = []
+        for item in values:
+            if isinstance(item, dict):
+                item = item.get("belief") or item.get("text") or item.get("content")
+            text = str(item or "").strip()
+            if text:
+                beliefs.append(text)
+        return beliefs

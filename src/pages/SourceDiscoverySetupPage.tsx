@@ -4,11 +4,16 @@ import {
   PButton, PHeading, PInlineNotification, PSpinner, PTag, PText,
 } from "@porsche-design-system/components-react";
 import PageHeader from "../components/PageHeader";
+import SourceDiscoveryAssistantPanel from "../components/SourceDiscoveryAssistantPanel";
 import StatusBadge from "../components/StatusBadge";
 import { createSourceDiscoveryJob } from "../lib/backend";
 import { getErrorMessage } from "../lib/errors";
 import { supabase } from "../lib/supabase";
-import type { CrisisCase } from "../lib/types";
+import type {
+  CrisisCase,
+  SourceDiscoveryAssistantPlanningSuggestion,
+  SourceDiscoveryAssistantRecommendedSettings,
+} from "../lib/types";
 import { useI18n } from "../lib/i18n";
 
 const SOURCE_TYPES = ["news", "official", "social", "complaint", "research"];
@@ -87,6 +92,18 @@ export default function SourceDiscoverySetupPage() {
     setSubmitting(false);
   }
 
+  function applyAssistantSuggestion(
+    suggestion: SourceDiscoveryAssistantPlanningSuggestion | SourceDiscoveryAssistantRecommendedSettings,
+  ) {
+    if (suggestion.topic) setTopic(suggestion.topic);
+    if (suggestion.description) setDescription(suggestion.description);
+    if (suggestion.region) setRegion(suggestion.region);
+    if (suggestion.language) setLanguage(suggestion.language);
+    if (suggestion.time_range) setTimeRange(suggestion.time_range);
+    if (suggestion.source_types.length > 0) setSourceTypes(suggestion.source_types);
+    if ("max_sources" in suggestion && suggestion.max_sources) setMaxSources(suggestion.max_sources);
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-full"><PSpinner size="medium" /></div>;
   }
@@ -116,7 +133,9 @@ export default function SourceDiscoverySetupPage() {
           />
         )}
 
-        <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md flex flex-col gap-fluid-md">
+        <div className="grid grid-cols-1 gap-fluid-md xl:grid-cols-5">
+          <div className="xl:col-span-3">
+            <div className="bg-surface border border-contrast-low rounded-lg p-fluid-md flex flex-col gap-fluid-md">
           <div>
             <PHeading size="small">{t("discovery.settings")}</PHeading>
             <PText size="small" className="text-contrast-medium mt-static-xs">
@@ -226,6 +245,43 @@ export default function SourceDiscoverySetupPage() {
             <PButton variant="secondary" onClick={() => navigate(`/cases/${caseId}/documents`)}>
               {t("common.back")}
             </PButton>
+          </div>
+            </div>
+          </div>
+
+          <div className="xl:col-span-2">
+            <SourceDiscoveryAssistantPanel
+              title="LLM Source Assistant"
+              description="Generate non-search planning guidance, or explicitly research a preliminary timeline with bounded searched sources."
+              defaultQuestion="Help me generate search directions, keywords, source types, and a starting time range for this event."
+              primaryActionLabel="Generate Search Plan"
+              buildRequest={(question) => ({
+                mode: "search_planning",
+                question,
+                case_id: caseId,
+                topic,
+                description,
+                region,
+                language,
+                time_range: timeRange,
+                source_types: sourceTypes,
+                max_sources: maxSources,
+              })}
+              briefingQuestion="Research an initial timeline, key actors, controversy focus, source landscape, evidence gaps, and recommended discovery settings for this topic."
+              buildBriefingRequest={(question) => ({
+                mode: "search_backed_briefing",
+                question,
+                case_id: caseId,
+                topic,
+                description,
+                region,
+                language,
+                time_range: timeRange,
+                source_types: sourceTypes,
+                max_sources: maxSources,
+              })}
+              onApplySuggestion={applyAssistantSuggestion}
+            />
           </div>
         </div>
       </div>

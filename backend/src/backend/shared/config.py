@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = _BACKEND_ROOT.parent
 
 
 class BackendConfig(BaseSettings):
     """Typed configuration for both API and worker runtimes."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(
+            _REPO_ROOT / ".env",
+            _REPO_ROOT / ".env.local",
+            _BACKEND_ROOT / ".env",
+        ),
         env_prefix="",
         extra="ignore",
         validate_default=True,

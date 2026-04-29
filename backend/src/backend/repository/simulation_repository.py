@@ -13,7 +13,6 @@ from backend.domain.simulation_records import (
     EntityRecord,
     MetricSnapshotRecord,
     RoundStateRecord,
-    RunType,
     SimulationRunRecord,
     SimulationStatus,
 )

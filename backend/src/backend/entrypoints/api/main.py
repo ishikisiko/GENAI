@@ -27,10 +27,12 @@ from backend.services.simulation_contracts import SimulationSubmissionRequest
 from backend.services.simulation_service import SimulationService
 from backend.services.source_discovery_contracts import (
     EvidencePackCreateRequest,
+    SourceDiscoveryAssistantRequest,
     SourceCandidateLibrarySaveRequest,
     SourceCandidateReviewRequest,
     SourceDiscoveryJobCreateRequest,
 )
+from backend.services.source_discovery_assistant_service import SourceDiscoveryAssistantService
 from backend.services.source_discovery_service import (
     SourceDiscoveryService,
     build_source_discovery_content_fetcher,
@@ -75,6 +77,7 @@ def create_app(
     extraction_service: ExtractionService | None = None,
     agent_generation_service: AgentGenerationService | None = None,
     source_discovery_service: SourceDiscoveryService | None = None,
+    source_discovery_assistant_service: SourceDiscoveryAssistantService | None = None,
     source_library_service: SourceLibraryService | None = None,
 ) -> FastAPI:
     configure_logging(config.app_name, config.log_level)
@@ -92,12 +95,23 @@ def create_app(
         job_repository=repository,
         llm_client=llm_client,
     )
+    source_discovery_search_provider = None
+    source_discovery_content_fetcher = None
+    if source_discovery_service is None or source_discovery_assistant_service is None:
+        source_discovery_search_provider = build_source_discovery_search_provider(config)
+        source_discovery_content_fetcher = build_source_discovery_content_fetcher(config)
     source_discovery_service = source_discovery_service or SourceDiscoveryService(
         source_repository=SourceDiscoveryRepository(database),
         job_repository=repository,
         extraction_repository=ExtractionRepository(database),
-        search_provider=build_source_discovery_search_provider(config),
-        content_fetcher=build_source_discovery_content_fetcher(config),
+        search_provider=source_discovery_search_provider,
+        content_fetcher=source_discovery_content_fetcher,
+    )
+    source_discovery_assistant_service = source_discovery_assistant_service or SourceDiscoveryAssistantService(
+        source_repository=SourceDiscoveryRepository(database),
+        llm_client=llm_client,
+        search_provider=source_discovery_search_provider,
+        content_fetcher=source_discovery_content_fetcher,
     )
     source_library_service = source_library_service or SourceLibraryService(
         repository=SourceLibraryRepository(database, semantic_index=build_semantic_index(config)),
@@ -115,6 +129,7 @@ def create_app(
     app.state.extraction_service = extraction_service
     app.state.agent_generation_service = agent_generation_service
     app.state.source_discovery_service = source_discovery_service
+    app.state.source_discovery_assistant_service = source_discovery_assistant_service
     app.state.source_library_service = source_library_service
 
     app.add_middleware(
@@ -202,6 +217,19 @@ def create_app(
     async def liveness():
         return {"status": "ok", "service": config.app_name}
 
+    @app.get("/")
+    async def root():
+        return {
+            "service": config.app_name,
+            "status": "ok",
+            "health": "/health/ready",
+            "frontend": "http://127.0.0.1:4173",
+        }
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        return Response(status_code=204)
+
     @app.get("/health/ready")
     async def readiness():
         try:
@@ -272,6 +300,10 @@ def create_app(
     @app.patch("/api/source-candidates/{source_id}")
     async def update_source_candidate(source_id: str, request: SourceCandidateReviewRequest):
         return (await app.state.source_discovery_service.update_candidate_review(source_id, request)).model_dump()
+
+    @app.post("/api/source-discovery/assistant")
+    async def source_discovery_assistant(request: SourceDiscoveryAssistantRequest):
+        return (await app.state.source_discovery_assistant_service.answer(request)).model_dump()
 
     @app.post("/api/source-candidates/{source_id}/save-to-library")
     async def save_source_candidate_to_library(source_id: str, request: SourceCandidateLibrarySaveRequest):

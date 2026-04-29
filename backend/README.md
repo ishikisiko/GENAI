@@ -17,7 +17,7 @@ This folder contains a minimal, additive Python backend workspace that hosts:
 From `backend/`:
 
 ```bash
-cp .env.example .env
+cp ../.env.local.example ../.env.local
 pip install -e ".[dev]"
 backend-migrate
 backend-api
@@ -42,7 +42,8 @@ Graph extraction rollout notes live in [docs/graph-extraction-rollout.md](docs/g
 - Realtime is optional and not required for core API/worker operation.
 - Async submissions now return both the canonical operator status path (`job_status_path`) and the product-facing status path (`status_path`).
 - `APP_PRODUCT_AUTH_MODE=public` preserves the current public product flow. Switch to `require_bearer` when rollout requires product endpoints to reject missing bearer headers.
-- Source discovery defaults to real Brave Search plus HTTP page fetching. Set `BRAVE_SEARCH_API_KEY` in `backend/.env`; keep `BRAVE_SEARCH_RATE_LIMIT_SECONDS=1.0` for one request per second subscriptions. For offline local runs, set `SOURCE_DISCOVERY_SEARCH_PROVIDER=mock` and `SOURCE_DISCOVERY_CONTENT_FETCHER=mock`.
+- Source discovery defaults to real Brave Search plus HTTP page fetching. Set `BRAVE_SEARCH_API_KEY` in root `.env.local`; keep `BRAVE_SEARCH_RATE_LIMIT_SECONDS=1.0` for one request per second subscriptions. For offline local runs, set `SOURCE_DISCOVERY_SEARCH_PROVIDER=mock` and `SOURCE_DISCOVERY_CONTENT_FETCHER=mock`.
+- The backend loads root `.env`, root `.env.local`, and optional `backend/.env` in that order. Keep `backend/.env` only for backend-specific overrides.
 
 ## Migration workflow
 
