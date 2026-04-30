@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="${ROOT_DIR}/logs/dev-services"
+BACKEND_WORKER_UNIT="genai-backend-worker.service"
 mkdir -p "${STATE_DIR}"
 
 info() {
@@ -17,6 +18,20 @@ fail() {
 is_running() {
   local pid_file="$1"
   [[ -f "${pid_file}" ]] && kill -0 "$(cat "${pid_file}")" 2>/dev/null
+}
+
+terminate_tree() {
+  local pid="$1"
+  local signal="$2"
+
+  if command -v pgrep >/dev/null 2>&1; then
+    local child
+    while read -r child; do
+      [[ -n "${child}" ]] && terminate_tree "${child}" "${signal}"
+    done < <(pgrep -P "${pid}" || true)
+  fi
+
+  kill "-${signal}" "${pid}" 2>/dev/null || kill "-${signal}" "-${pid}" 2>/dev/null || kill "-${signal}" "${pid}" 2>/dev/null || true
 }
 
 require_file() {
@@ -104,6 +119,55 @@ start_service() {
   fi
 }
 
+systemd_unit_available() {
+  command -v systemctl >/dev/null 2>&1 && systemctl cat "${BACKEND_WORKER_UNIT}" >/dev/null 2>&1
+}
+
+stop_manual_backend_worker_if_running() {
+  local pid_file="${STATE_DIR}/backend-worker.pid"
+  if ! is_running "${pid_file}"; then
+    rm -f "${pid_file}"
+    return
+  fi
+
+  local pid
+  pid="$(cat "${pid_file}")"
+  info "Stopping manual backend-worker before using systemd (pid ${pid})."
+  terminate_tree "${pid}" TERM
+  for _ in {1..10}; do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      rm -f "${pid_file}"
+      return
+    fi
+    sleep 1
+  done
+
+  terminate_tree "${pid}" KILL
+  rm -f "${pid_file}"
+}
+
+start_backend_worker() {
+  if systemd_unit_available; then
+    stop_manual_backend_worker_if_running
+    info "Starting backend-worker via systemd (${BACKEND_WORKER_UNIT})..."
+    systemctl reset-failed "${BACKEND_WORKER_UNIT}" || true
+    systemctl start "${BACKEND_WORKER_UNIT}"
+    sleep 2
+
+    if ! systemctl is-active --quiet "${BACKEND_WORKER_UNIT}"; then
+      systemctl --no-pager --full status "${BACKEND_WORKER_UNIT}" >&2 || true
+      fail "backend-worker failed to start via systemd."
+    fi
+
+    info "backend-worker active via systemd (pid $(systemctl show "${BACKEND_WORKER_UNIT}" -p MainPID --value))."
+    return
+  fi
+
+  local backend_worker_cmd
+  backend_worker_cmd="$(resolve_backend_command backend-worker)"
+  start_service "backend-worker" "${ROOT_DIR}/backend" "${backend_worker_cmd}"
+}
+
 command -v npm >/dev/null 2>&1 || fail "npm is required."
 require_file "${ROOT_DIR}/.env.local" "Copy .env.local.example to .env.local and fill frontend/backend values."
 detect_supabase_port_conflict
@@ -115,16 +179,16 @@ info "Starting local Supabase stack..."
 )
 
 BACKEND_API_CMD="$(resolve_backend_command backend-api)"
-BACKEND_WORKER_CMD="$(resolve_backend_command backend-worker)"
 
 start_service "backend-api" "${ROOT_DIR}/backend" "${BACKEND_API_CMD}"
-start_service "backend-worker" "${ROOT_DIR}/backend" "${BACKEND_WORKER_CMD}"
+start_backend_worker
 start_service "frontend" "${ROOT_DIR}" npm run dev:local
 
 cat <<EOF
 [start-all] Full local stack is running.
 [start-all] Frontend:    http://127.0.0.1:4173
 [start-all] Backend API: http://127.0.0.1:8000
+[start-all] Worker:      ${BACKEND_WORKER_UNIT}
 [start-all] Supabase:    http://127.0.0.1:54321
 [start-all] Studio:      http://127.0.0.1:54323
 [start-all] Logs/PIDs:   ${STATE_DIR}

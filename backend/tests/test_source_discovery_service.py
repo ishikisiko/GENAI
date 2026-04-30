@@ -34,6 +34,7 @@ from backend.services.source_discovery_service import (
     SourceDiscoveryService,
     build_source_discovery_content_fetcher,
     build_source_discovery_search_provider,
+    brave_freshness_for_time_range,
 )
 from backend.services.source_library_service import SourceLibraryService
 from backend.shared.errors import ApplicationError, ConfigurationError
@@ -383,6 +384,20 @@ def test_brave_provider_maps_web_results_and_sends_subscription_header():
     assert seen_requests[0].headers["X-Subscription-Token"] == "test-key"
     assert seen_requests[0].url.params["q"] == "Battery recall US"
     assert seen_requests[0].url.params["count"] == "3"
+    assert seen_requests[0].url.params["freshness"] == "pm"
+
+
+def test_brave_freshness_supports_presets_and_custom_ranges():
+    def fixed_now() -> datetime:
+        return datetime(2026, 4, 30, tzinfo=timezone.utc)
+
+    assert brave_freshness_for_time_range("last_24_hours", now=fixed_now) == "pd"
+    assert brave_freshness_for_time_range("last_7_days", now=fixed_now) == "pw"
+    assert brave_freshness_for_time_range("last_30_days", now=fixed_now) == "pm"
+    assert brave_freshness_for_time_range("last_365_days", now=fixed_now) == "py"
+    assert brave_freshness_for_time_range("last_90_days", now=fixed_now) == "2026-01-30to2026-04-30"
+    assert brave_freshness_for_time_range("2026-04-01to2026-04-30", now=fixed_now) == "2026-04-01to2026-04-30"
+    assert brave_freshness_for_time_range("anytime", now=fixed_now) is None
 
 
 def test_brave_provider_throttles_to_one_request_per_second():

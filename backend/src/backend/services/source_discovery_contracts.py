@@ -36,6 +36,11 @@ class SourceDiscoveryJobCreateRequest(BaseModel):
         normalized = [item.strip().lower() for item in value if item.strip()]
         return normalized or ["news"]
 
+    @field_validator("time_range")
+    @classmethod
+    def normalize_time_range(cls, value: str) -> str:
+        return value.strip()
+
 
 class SourceDiscoveryJobPayload(SourceDiscoveryJobCreateRequest):
     source_discovery_job_id: str
@@ -232,6 +237,11 @@ class SourceDiscoveryAssistantRequest(BaseModel):
     time_range: str = ""
     source_types: list[str] = Field(default_factory=list)
     max_sources: int | None = Field(default=None, ge=1, le=50)
+
+    @field_validator("time_range")
+    @classmethod
+    def normalize_time_range(cls, value: str) -> str:
+        return value.strip()
 
 
 class SourceDiscoveryAssistantCitation(BaseModel):

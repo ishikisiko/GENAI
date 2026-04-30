@@ -103,6 +103,85 @@ class PreviewExtractor(Protocol):
         ...
 
 
+_CUSTOM_DATE_RANGE_RE = re.compile(
+    r"^(?P<start>\d{4}-\d{2}-\d{2})\s*(?:to|\.{2}|/)\s*(?P<end>\d{4}-\d{2}-\d{2})$",
+    re.IGNORECASE,
+)
+_RELATIVE_DAYS_RE = re.compile(r"^(?:last|past)[_\s-]*(?P<days>\d+)[_\s-]*days?$", re.IGNORECASE)
+
+
+def brave_freshness_for_time_range(
+    time_range: str,
+    now: Callable[[], datetime] | None = None,
+) -> str | None:
+    raw = time_range.strip()
+    if not raw:
+        return None
+
+    normalized = re.sub(r"[\s-]+", "_", raw.lower())
+    aliases = {
+        "anytime": None,
+        "any_time": None,
+        "all_time": None,
+        "no_limit": None,
+        "pd": "pd",
+        "last_day": "pd",
+        "past_day": "pd",
+        "last_24_hours": "pd",
+        "past_24_hours": "pd",
+        "pw": "pw",
+        "last_week": "pw",
+        "past_week": "pw",
+        "last_7_days": "pw",
+        "past_7_days": "pw",
+        "pm": "pm",
+        "last_month": "pm",
+        "past_month": "pm",
+        "last_30_days": "pm",
+        "past_30_days": "pm",
+        "last_31_days": "pm",
+        "past_31_days": "pm",
+        "py": "py",
+        "last_year": "py",
+        "past_year": "py",
+        "last_365_days": "py",
+        "past_365_days": "py",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+
+    date_range_match = _CUSTOM_DATE_RANGE_RE.match(raw)
+    if date_range_match:
+        try:
+            start = datetime.fromisoformat(date_range_match.group("start")).date()
+            end = datetime.fromisoformat(date_range_match.group("end")).date()
+        except ValueError:
+            return None
+        if start <= end:
+            return f"{start.isoformat()}to{end.isoformat()}"
+        return None
+
+    relative_match = _RELATIVE_DAYS_RE.match(raw)
+    if not relative_match:
+        return None
+
+    days = int(relative_match.group("days"))
+    if days <= 0:
+        return None
+    if days == 1:
+        return "pd"
+    if days == 7:
+        return "pw"
+    if days in {30, 31}:
+        return "pm"
+    if days == 365:
+        return "py"
+
+    end = (now or (lambda: datetime.now(timezone.utc)))().astimezone(timezone.utc).date()
+    start = end - timedelta(days=days)
+    return f"{start.isoformat()}to{end.isoformat()}"
+
+
 class SimpleQueryExpander:
     def expand(self, request: SourceDiscoveryJobPayload) -> list[str]:
         base = " ".join(part for part in [request.topic, request.region, request.description] if part).strip()
@@ -148,7 +227,7 @@ class MockSearchProvider:
                     source_type=source_type,
                     provider="mock",
                     published_at=base_date - timedelta(days=index * 5),
-                    metadata={"query": query, "rank": index + 1, "mock": True},
+                    metadata={"query": query, "rank": index + 1, "mock": True, "time_range": request.time_range},
                 )
             )
         return results
@@ -166,6 +245,7 @@ class BraveSearchProvider:
         timeout_seconds: float = 5.0,
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.monotonic,
+        current_time: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         if not api_key:
@@ -179,6 +259,7 @@ class BraveSearchProvider:
         self._timeout_seconds = max(timeout_seconds, 1.0)
         self._transport = transport
         self._clock = clock
+        self._current_time = current_time or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep
         self._lock = asyncio.Lock()
         self._last_request_at: float | None = None
@@ -203,6 +284,7 @@ class BraveSearchProvider:
                             "country": self._country,
                             "search_lang": self._search_lang,
                             "spellcheck": "1",
+                            **self._freshness_params(request),
                         },
                     )
                     response.raise_for_status()
@@ -248,6 +330,7 @@ class BraveSearchProvider:
         web = payload.get("web") if isinstance(payload, dict) else None
         raw_results = web.get("results", []) if isinstance(web, dict) else []
         results: list[SearchResult] = []
+        freshness = brave_freshness_for_time_range(request.time_range, now=self._current_time)
         for rank, item in enumerate(raw_results, start=1):
             if not isinstance(item, dict):
                 continue
@@ -266,6 +349,7 @@ class BraveSearchProvider:
                     metadata={
                         "query": query,
                         "rank": rank,
+                        "freshness": freshness,
                         "age": item.get("age"),
                         "language": item.get("language"),
                         "family_friendly": item.get("family_friendly"),
@@ -275,6 +359,10 @@ class BraveSearchProvider:
                 )
             )
         return results
+
+    def _freshness_params(self, request: SourceDiscoveryJobPayload) -> dict[str, str]:
+        freshness = brave_freshness_for_time_range(request.time_range, now=self._current_time)
+        return {"freshness": freshness} if freshness else {}
 
     @staticmethod
     def _source_type_for_result(item: dict[str, Any], request: SourceDiscoveryJobPayload) -> str:

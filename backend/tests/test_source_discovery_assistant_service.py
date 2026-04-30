@@ -203,7 +203,38 @@ def test_search_planning_returns_structured_suggestions() -> None:
 
     assert response.mode == "search_planning"
     assert response.planning_suggestions[0].queries == ["battery recall official timeline"]
+    assert response.planning_suggestions[0].time_range == "last_30_days"
     assert "Battery recall" in llm_client.prompts[0]
+    assert "Every\nplanning_suggestions item must include time_range" in llm_client.prompts[0]
+
+
+def test_search_planning_defaults_suggestion_time_range_to_request() -> None:
+    llm_client = _FakeLlmClient(
+        {
+            "answer": "Use official sources.",
+            "planning_suggestions": [
+                {
+                    "label": "Official chronology",
+                    "rationale": "Find regulator statements.",
+                    "queries": ["battery recall regulator chronology"],
+                }
+            ],
+        }
+    )
+    service = SourceDiscoveryAssistantService(_FakeSourceRepository(), llm_client)  # type: ignore[arg-type]
+
+    response = asyncio.run(
+        service.answer(
+            SourceDiscoveryAssistantRequest(
+                mode="search_planning",
+                case_id="case-123",
+                topic="Battery recall",
+                time_range="last_90_days",
+            )
+        )
+    )
+
+    assert response.planning_suggestions[0].time_range == "last_90_days"
 
 
 def test_search_planning_requires_case_context() -> None:

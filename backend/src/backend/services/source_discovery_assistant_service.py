@@ -96,6 +96,7 @@ class SourceDiscoveryAssistantService:
 
         prompt = self._build_search_planning_prompt(request, crisis_case)
         response = await self._chat_response(prompt, expected_mode=SEARCH_PLANNING_MODE)
+        self._ensure_assistant_time_ranges(response, request.time_range)
         self._logger.info("source_discovery_assistant_search_planning", extra={"case_id": request.case_id})
         return response
 
@@ -133,6 +134,7 @@ class SourceDiscoveryAssistantService:
 
         prompt = self._build_search_backed_briefing_prompt(request, crisis_case, topic, description, queries, sources)
         response = await self._chat_response(prompt, expected_mode=SEARCH_BACKED_BRIEFING_MODE)
+        self._ensure_assistant_time_ranges(response, request.time_range)
         response.briefing_limits = response.briefing_limits or limits
         if not response.citations and not response.insufficient_evidence:
             response.insufficient_evidence = True
@@ -296,6 +298,15 @@ class SourceDiscoveryAssistantService:
                 normalized["max_sources"] = None
         return normalized
 
+    @staticmethod
+    def _ensure_assistant_time_ranges(response: SourceDiscoveryAssistantResponse, requested_time_range: str) -> None:
+        fallback_time_range = requested_time_range.strip() or "anytime"
+        for suggestion in response.planning_suggestions:
+            if not suggestion.time_range:
+                suggestion.time_range = fallback_time_range
+        if response.recommended_settings and not response.recommended_settings.time_range:
+            response.recommended_settings.time_range = fallback_time_range
+
     @classmethod
     def _normalize_source_summary(cls, item: dict[str, Any]) -> dict[str, Any]:
         title = str(item.get("title") or item.get("url") or "Untitled source")
@@ -386,7 +397,10 @@ class SourceDiscoveryAssistantService:
         return f"""You are a source discovery planning assistant for crisis research.
 
 Use only the case and form context below. Do not claim facts are confirmed because no source
-materials have been discovered yet. Produce search planning guidance only.
+materials have been discovered yet. Produce search planning guidance only. Every
+planning_suggestions item must include time_range. Use form.time_range unless recommending
+a narrower explicit window. Do not rely on query wording alone to express recency; keep the
+time limit in the structured time_range field so downstream search can apply it.
 
 Return ONLY a JSON object with this shape:
 {{

@@ -17,6 +17,14 @@ import type {
 import { useI18n } from "../lib/i18n";
 
 const SOURCE_TYPES = ["news", "official", "social", "complaint", "research"];
+const TIME_RANGE_PRESETS = [
+  { value: "last_24_hours", label: "Last 24 hours" },
+  { value: "last_7_days", label: "Last 7 days" },
+  { value: "last_30_days", label: "Last 30 days" },
+  { value: "last_90_days", label: "Last 90 days" },
+  { value: "last_365_days", label: "Last year" },
+  { value: "anytime", label: "Any time" },
+];
 
 export default function SourceDiscoverySetupPage() {
   const { t } = useI18n();
@@ -188,17 +196,19 @@ export default function SourceDiscoverySetupPage() {
 
             <label className="flex flex-col gap-static-xs">
               <PText size="small" weight="semi-bold">{t("discovery.timeRange")}</PText>
-              <select
+              <input
+                list="source-discovery-time-ranges"
                 value={timeRange}
                 onChange={(event) => setTimeRange(event.target.value)}
+                placeholder="last_90_days or 2026-04-01to2026-04-30"
                 className="w-full border border-contrast-low rounded bg-canvas px-static-md py-static-sm text-primary focus:outline-none focus:border-primary"
                 style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif", fontSize: "15px" }}
-              >
-                <option value="last_7_days">Last 7 days</option>
-                <option value="last_30_days">Last 30 days</option>
-                <option value="last_90_days">Last 90 days</option>
-                <option value="anytime">Any time</option>
-              </select>
+              />
+              <datalist id="source-discovery-time-ranges">
+                {TIME_RANGE_PRESETS.map((preset) => (
+                  <option key={preset.value} value={preset.value}>{preset.label}</option>
+                ))}
+              </datalist>
             </label>
 
             <label className="flex flex-col gap-static-xs">
