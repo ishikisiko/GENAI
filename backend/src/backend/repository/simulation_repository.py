@@ -101,6 +101,9 @@ class SimulationRepository:
                 strategy_type=request.strategy_type.value if request.strategy_type else None,
                 strategy_message=request.strategy_message,
                 injection_round=request.injection_round,
+                strategy_sequence=[
+                    step.model_dump(mode="json") for step in request.strategy_sequence
+                ] if request.strategy_sequence else None,
                 total_rounds=request.total_rounds,
                 status=SimulationStatus.PENDING,
                 last_heartbeat_at=now,
@@ -118,6 +121,7 @@ class SimulationRepository:
                 strategy_type=request.strategy_type,
                 strategy_message=request.strategy_message,
                 injection_round=request.injection_round,
+                strategy_sequence=request.strategy_sequence,
             ).model_dump(mode="json")
             payload.pop("job_id", None)
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
+
 from backend.entrypoints.api.main import create_app
 from backend.shared.config import BackendConfig
 from backend.services.simulation_contracts import SimulationSubmissionRequest
@@ -129,6 +131,12 @@ def _get_endpoint(app, path: str, method: str):
     raise AssertionError(f"Route not found: {method} {path}")
 
 
+async def _send_request(app, method: str, path: str, json: dict):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        return await client.request(method, path, json=json)
+
+
 def test_submit_simulation_endpoint_returns_ids():
     app = create_app(
         _build_config(),
@@ -151,6 +159,32 @@ def test_submit_simulation_endpoint_returns_ids():
     assert response["run_id"] == "run-123"
     assert response["job_status_path"] == "/api/jobs/job-123"
     assert response["status_path"] == "/api/simulation-runs/run-123"
+
+
+def test_submit_simulation_validation_errors_use_product_envelope():
+    app = create_app(
+        _build_config(),
+        database=_FakeDb(),
+        repository=_FakeRepo(),
+        simulation_service=_FakeSimulationService(),
+    )
+
+    response = asyncio.run(
+        _send_request(
+            app,
+            "POST",
+            "/api/simulations",
+            json={
+                "case_id": "case-123",
+                "run_type": "baseline",
+                "total_rounds": 5,
+                "strategy_sequence": [{"round_number": 1, "strategy_type": "clarification"}],
+            },
+        )
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 def test_job_and_run_status_endpoints_are_poll_friendly():

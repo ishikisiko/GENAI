@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -195,6 +197,20 @@ def create_app(
                 route=request.url.path,
             ),
         )
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(request: Request, exc: RequestValidationError):
+        logger.error("request_validation_error", extra={"path": str(request.url), "error": str(exc)})
+        payload = ApplicationError(
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Invalid request payload",
+            status_code=422,
+            details={"errors": jsonable_encoder(exc.errors())},
+        ).to_payload(
+            request_id=getattr(request.state, "request_id", None),
+            route=request.url.path,
+        )
+        return JSONResponse(status_code=422, content=payload)
 
     @app.exception_handler(Exception)
     async def unexpected_error_handler(request: Request, exc: Exception):

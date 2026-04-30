@@ -16,6 +16,7 @@ from backend.services.simulation_contracts import (
     SimulationRunStatusResponse,
     SimulationSubmissionRequest,
     SimulationSubmissionResponse,
+    StrategySequenceStep,
 )
 from backend.shared.config import BackendConfig
 from backend.shared.errors import ApplicationError, ErrorCode
@@ -223,18 +224,35 @@ Key Entities: {", ".join(f"{entity.name} ({entity.entity_type})" for entity in e
         )
 
         try:
+            sequence_by_round = {
+                step.round_number: step for step in payload.strategy_sequence or []
+            }
+            applied_strategy_summaries: list[str] = []
+
             for round_number in range(1, payload.total_rounds + 1):
                 await self._job_repository.touch_heartbeat(payload.job_id)
                 await self._simulation_repository.update_run_heartbeat(payload.run_id, status=SimulationStatus.RUNNING)
 
+                sequence_step = sequence_by_round.get(round_number)
                 is_injection_round = (
-                    payload.run_type == RunType.INTERVENTION
+                    sequence_step is None
+                    and payload.run_type == RunType.INTERVENTION
                     and payload.injection_round is not None
                     and round_number == payload.injection_round
                 )
-                strategy_applied = payload.strategy_type.value if is_injection_round and payload.strategy_type else None
+                strategy_applied = None
+                if sequence_step is not None:
+                    strategy_applied = sequence_step.strategy_type.value
+                elif is_injection_round and payload.strategy_type:
+                    strategy_applied = payload.strategy_type.value
 
-                strategy_context = self._build_strategy_context(payload, round_number, is_injection_round)
+                strategy_context = self._build_strategy_context(
+                    payload,
+                    round_number,
+                    is_injection_round,
+                    sequence_step,
+                    applied_strategy_summaries,
+                )
                 prompt = f"""You are simulating a crisis communication scenario. Simulate round {round_number} of {payload.total_rounds}.
 
 CRISIS CONTEXT:
@@ -292,6 +310,10 @@ Return ONLY valid JSON."""
                 )
                 previous_narrative = round_result.narrative_state
                 previous_sentiment = round_result.overall_sentiment
+                if sequence_step is not None:
+                    applied_strategy_summaries.append(
+                        f"Round {round_number}: {sequence_step.strategy_type.value} response"
+                    )
 
             await self._simulation_repository.mark_run_completed(payload.run_id)
             await self._job_repository.touch_heartbeat(payload.job_id)
@@ -304,7 +326,31 @@ Return ONLY valid JSON."""
         payload: SimulationJobPayload,
         round_number: int,
         is_injection_round: bool,
+        sequence_step: StrategySequenceStep | None = None,
+        applied_strategy_summaries: list[str] | None = None,
     ) -> str:
+        if sequence_step is not None:
+            prior_context = ""
+            prior_summaries = (applied_strategy_summaries or [])[-3:]
+            if prior_summaries:
+                prior_context = (
+                    "\nPrior official responses still visible to the public:\n"
+                    + "\n".join(f"- {summary}" for summary in prior_summaries)
+                )
+            return (
+                f'\n\nPLANNED CRISIS RESPONSE STRATEGY ISSUED (Round {round_number}):\n'
+                f"Strategy Type: {sequence_step.strategy_type.value.upper()}\n"
+                f'Message: "{sequence_step.strategy_message or get_default_strategy_message(sequence_step.strategy_type.value)}"\n'
+                "This response has just been made public. All agents are now aware of this official response."
+                f"{prior_context}"
+            )
+        if applied_strategy_summaries:
+            prior_summaries = applied_strategy_summaries[-3:]
+            return (
+                "\n\nNo new official response is issued this round.\n"
+                "Prior official responses may still shape public reactions:\n"
+                + "\n".join(f"- {summary}" for summary in prior_summaries)
+            )
         if not payload.strategy_type:
             return ""
         if is_injection_round:

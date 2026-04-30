@@ -362,6 +362,7 @@ class SimulationRunRecord(Base):
     strategy_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     strategy_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     injection_round: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    strategy_sequence: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     total_rounds: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
     status: Mapped[SimulationStatus] = mapped_column(String(20), default=SimulationStatus.PENDING, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

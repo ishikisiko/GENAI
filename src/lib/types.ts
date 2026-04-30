@@ -9,6 +9,12 @@ export type RunType = "baseline" | "intervention";
 export type SimStatus = "pending" | "running" | "completed" | "failed";
 export type StrategyType = "apology" | "clarification" | "compensation" | "rebuttal";
 
+export interface StrategySequenceStep {
+  round_number: number;
+  strategy_type: StrategyType;
+  strategy_message?: string | null;
+}
+
 export interface CrisisCase {
   id: string;
   title: string;
@@ -256,6 +262,7 @@ export interface SimulationRun {
   strategy_type: StrategyType | null;
   strategy_message: string | null;
   injection_round: number | null;
+  strategy_sequence: StrategySequenceStep[] | null;
   total_rounds: number;
   status: SimStatus;
   error_message: string | null;
