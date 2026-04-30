@@ -37,11 +37,17 @@ const CHART_COLORS = {
 
 function getRunColor(run: SimulationRun) {
   if (run.run_type === "baseline") return CHART_COLORS.baseline;
-  return CHART_COLORS[run.strategy_type as keyof typeof CHART_COLORS] || "#4FB3FF";
+  const firstSequenceStrategy = run.strategy_sequence?.[0]?.strategy_type;
+  return CHART_COLORS[(firstSequenceStrategy || run.strategy_type) as keyof typeof CHART_COLORS] || "#4FB3FF";
 }
 
 function getRunLabel(run: SimulationRun) {
   if (run.run_type === "baseline") return "Baseline (No Response)";
+  if (run.strategy_sequence?.length) {
+    const firstStep = run.strategy_sequence[0];
+    const firstLabel = STRATEGY_LABELS[firstStep.strategy_type] || firstStep.strategy_type;
+    return `Sequence (${run.strategy_sequence.length} steps, starts ${firstLabel} R${firstStep.round_number})`;
+  }
   return `${STRATEGY_LABELS[run.strategy_type as StrategyType] || run.strategy_type} @ Round ${run.injection_round}`;
 }
 
@@ -102,19 +108,19 @@ function generateVerdict(baselineData: RunData, interventionRuns: RunData[]): st
     .sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
-  const stratLabel = STRATEGY_LABELS[best.rd.run.strategy_type as StrategyType] || best.rd.run.strategy_type;
-  const earlyLate = (best.rd.run.injection_round ?? 0) <= 2 ? "early" : "late";
+  const stratLabel = getRunLabel(best.rd.run);
+  const earlyLate = (best.rd.run.strategy_sequence?.[0]?.round_number ?? best.rd.run.injection_round ?? 0) <= 2 ? "early" : "late";
 
   const sentimentEffect = best.sentimentGain > 0.1 ? "meaningfully improved sentiment" : best.sentimentGain < -0.1 ? "failed to improve sentiment" : "had a neutral effect on sentiment";
   const polarizationEffect = best.polarizationReduction > 0.1 ? "significantly reduced polarization" : "had limited effect on polarization";
 
-  let verdict = `The ${stratLabel} strategy (injected ${earlyLate}, round ${best.rd.run.injection_round}) performed best overall. `;
+  let verdict = `The ${stratLabel} intervention (${earlyLate} first response) performed best overall. `;
   verdict += `It ${sentimentEffect} and ${polarizationEffect} compared to the no-response baseline. `;
 
   if (ranked.length > 1) {
     const worst = ranked[ranked.length - 1];
-    const worstLabel = STRATEGY_LABELS[worst.rd.run.strategy_type as StrategyType] || worst.rd.run.strategy_type;
-    verdict += `The ${worstLabel} strategy performed least effectively in this scenario.`;
+    const worstLabel = getRunLabel(worst.rd.run);
+    verdict += `The ${worstLabel} intervention performed least effectively in this scenario.`;
   }
 
   return verdict;

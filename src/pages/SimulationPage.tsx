@@ -18,6 +18,7 @@ import type {
   SimulationRun,
   SimulationRunStatusResponse,
   RoundState,
+  StrategySequenceStep,
   StrategyType,
 } from "../lib/types";
 import { AGENT_ROLE_LABELS, AGENT_ROLE_COLORS, STRATEGY_LABELS, STRATEGY_DESCRIPTIONS, STRATEGY_ICONS } from "../lib/constants";
@@ -75,6 +76,38 @@ const ROLE_ICONS: Record<AgentProfile["role"], IconName> = {
   consumer: "user", supporter: "heart", critic: "dislike", media: "broadcast",
 };
 
+const STRATEGY_TYPES: StrategyType[] = ["apology", "clarification", "compensation", "rebuttal"];
+
+type InterventionMode = "single" | "sequence";
+type StrategySequenceDraftStep = {
+  round_number: number;
+  strategy_type: StrategyType | "";
+  strategy_message: string;
+};
+
+function buildSequenceDraft(totalRounds: number, existing: StrategySequenceDraftStep[] = []): StrategySequenceDraftStep[] {
+  return Array.from({ length: totalRounds }, (_, index) => {
+    const roundNumber = index + 1;
+    const existingStep = existing.find((step) => step.round_number === roundNumber);
+    if (existingStep) return existingStep;
+    return {
+      round_number: roundNumber,
+      strategy_type: roundNumber === 1 ? "clarification" : "",
+      strategy_message: "",
+    };
+  });
+}
+
+function toStrategySequence(steps: StrategySequenceDraftStep[]): StrategySequenceStep[] {
+  return steps
+    .filter((step): step is StrategySequenceDraftStep & { strategy_type: StrategyType } => step.strategy_type !== "")
+    .map((step) => ({
+      round_number: step.round_number,
+      strategy_type: step.strategy_type,
+      strategy_message: step.strategy_message.trim() || undefined,
+    }));
+}
+
 function isActiveRun(run: SimulationRun) {
   return run.status === "pending" || run.status === "running";
 }
@@ -102,6 +135,8 @@ export default function SimulationPage() {
   const [injectionRound, setInjectionRound] = useState(2);
   const [baselineTotalRounds, setBaselineTotalRounds] = useState(5);
   const [interventionTotalRounds, setInterventionTotalRounds] = useState(5);
+  const [interventionMode, setInterventionMode] = useState<InterventionMode>("single");
+  const [strategySequence, setStrategySequence] = useState<StrategySequenceDraftStep[]>(() => buildSequenceDraft(5));
 
   const fetchPageData = useCallback(async () => {
     const [{ data: c }, { data: ags }, { data: rs }] = await Promise.all([
@@ -231,14 +266,24 @@ export default function SimulationPage() {
     else setRunningIntervention(true);
 
     try {
+      const sequencePayload = type === "intervention" && interventionMode === "sequence"
+        ? toStrategySequence(strategySequence)
+        : [];
+      if (type === "intervention" && interventionMode === "sequence" && sequencePayload.length === 0) {
+        throw new Error("Add at least one strategy step before running a sequence intervention.");
+      }
+
       const result = await submitSimulation({
         case_id: caseId!,
         run_type: type,
         total_rounds: type === "baseline" ? baselineTotalRounds : interventionTotalRounds,
-        ...(type === "intervention" && {
+        ...(type === "intervention" && interventionMode === "single" && {
           strategy_type: strategyType,
           strategy_message: strategyMessage || undefined,
           injection_round: effectiveInjectionRound,
+        }),
+        ...(type === "intervention" && interventionMode === "sequence" && {
+          strategy_sequence: sequencePayload,
         }),
       });
 
@@ -397,9 +442,30 @@ export default function SimulationPage() {
                 <PHeading size="small">{t("simulation.injectStrategy")}</PHeading>
 
                 <div>
+                  <PText size="small" weight="semi-bold" className="mb-static-xs">Intervention Mode</PText>
+                  <div className="grid grid-cols-2 gap-static-xs">
+                    {(["single", "sequence"] as InterventionMode[]).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => setInterventionMode(mode)}
+                        className={`px-static-sm py-static-sm rounded border text-sm font-medium transition-colors ${
+                          interventionMode === mode
+                            ? "border-primary bg-primary text-[white]"
+                            : "border-contrast-low bg-canvas text-contrast-medium hover:border-primary"
+                        }`}
+                        style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif" }}
+                      >
+                        {mode === "single" ? "Single Strategy" : "Strategy Sequence"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {interventionMode === "single" && (
+                <div>
                   <PText size="small" weight="semi-bold" className="mb-static-xs">Strategy Type</PText>
                   <div className="grid grid-cols-1 gap-static-xs sm:grid-cols-2">
-                    {(["apology", "clarification", "compensation", "rebuttal"] as StrategyType[]).map((s) => (
+                    {STRATEGY_TYPES.map((s) => (
                       <button
                         key={s}
                         onClick={() => setStrategyType(s)}
@@ -419,6 +485,7 @@ export default function SimulationPage() {
                     {STRATEGY_DESCRIPTIONS[strategyType]}
                   </PText>
                 </div>
+                )}
 
                 <div>
                   <PText size="small" weight="semi-bold" className="mb-static-xs">Final Round</PText>
@@ -433,6 +500,7 @@ export default function SimulationPage() {
                         const clamped = Math.min(Math.max(next, 1), 20);
                         setInterventionTotalRounds(clamped);
                         setInjectionRound((current) => Math.min(current, clamped));
+                        setStrategySequence((current) => buildSequenceDraft(clamped, current));
                       }
                     }}
                     className="w-full border border-contrast-low rounded bg-canvas px-static-sm py-static-xs text-primary focus:outline-none focus:border-primary text-sm"
@@ -443,6 +511,7 @@ export default function SimulationPage() {
                   </PText>
                 </div>
 
+                {interventionMode === "single" && (
                 <div>
                   <PText size="small" weight="semi-bold" className="mb-static-xs">
                     Inject at Round
@@ -467,7 +536,9 @@ export default function SimulationPage() {
                     Strategy applied at the start of round {effectiveInjectionRound}
                   </PText>
                 </div>
+                )}
 
+                {interventionMode === "single" && (
                 <div>
                   <PText size="small" weight="semi-bold" className="mb-static-xs">Custom Message (optional)</PText>
                   <textarea
@@ -479,6 +550,60 @@ export default function SimulationPage() {
                     style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif" }}
                   />
                 </div>
+                )}
+
+                {interventionMode === "sequence" && (
+                  <div className="flex flex-col gap-static-sm">
+                    <div className="flex items-center justify-between gap-static-sm">
+                      <PText size="small" weight="semi-bold">Per-Round Plan</PText>
+                      <PTag color="notification-info-soft">
+                        {toStrategySequence(strategySequence).length} planned
+                      </PTag>
+                    </div>
+                    {strategySequence.map((step) => (
+                      <div key={step.round_number} className="bg-canvas border border-contrast-low rounded p-static-sm flex flex-col gap-static-xs">
+                        <div className="flex flex-col gap-static-xs sm:flex-row sm:items-center">
+                          <PText size="small" weight="semi-bold" className="sm:w-20">Round {step.round_number}</PText>
+                          <select
+                            value={step.strategy_type}
+                            onChange={(e) => {
+                              const nextStrategy = e.target.value as StrategyType | "";
+                              setStrategySequence((current) => current.map((currentStep) => (
+                                currentStep.round_number === step.round_number
+                                  ? { ...currentStep, strategy_type: nextStrategy }
+                                  : currentStep
+                              )));
+                            }}
+                            className="flex-1 border border-contrast-low rounded bg-surface px-static-sm py-static-xs text-primary focus:outline-none focus:border-primary text-sm"
+                            style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif" }}
+                          >
+                            <option value="">No intervention</option>
+                            {STRATEGY_TYPES.map((strategy) => (
+                              <option key={strategy} value={strategy}>{STRATEGY_LABELS[strategy]}</option>
+                            ))}
+                          </select>
+                        </div>
+                        {step.strategy_type && (
+                          <textarea
+                            value={step.strategy_message}
+                            onChange={(e) => {
+                              const nextMessage = e.target.value;
+                              setStrategySequence((current) => current.map((currentStep) => (
+                                currentStep.round_number === step.round_number
+                                  ? { ...currentStep, strategy_message: nextMessage }
+                                  : currentStep
+                              )));
+                            }}
+                            placeholder={`Optional ${STRATEGY_LABELS[step.strategy_type].toLowerCase()} message for round ${step.round_number}...`}
+                            rows={2}
+                            className="w-full border border-contrast-low rounded bg-surface px-static-sm py-static-xs text-primary placeholder:text-contrast-low focus:outline-none focus:border-primary resize-none text-sm"
+                            style={{ fontFamily: "'Porsche Next','Arial Narrow',Arial,sans-serif" }}
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                   <PButton
                     loading={runningIntervention}
@@ -487,7 +612,13 @@ export default function SimulationPage() {
                     variant="secondary"
                     onClick={() => runSimulation("intervention")}
                 >
-                  {runningIntervention ? "Simulating..." : hasRunningSim ? "Run later" : "Run Intervention"}
+                  {runningIntervention
+                    ? "Simulating..."
+                    : hasRunningSim
+                      ? "Run later"
+                      : interventionMode === "sequence"
+                        ? "Run Strategy Sequence"
+                        : "Run Intervention"}
                 </PButton>
                 {!hasBaseline && (
                   <PText size="small" className="text-warning text-center">Run baseline first</PText>
@@ -517,7 +648,9 @@ export default function SimulationPage() {
                         <PText size="small" weight="semi-bold">
                           {runningBaseline
                             ? "Submitting Baseline Simulation..."
-                            : `Submitting ${STRATEGY_LABELS[strategyType]} Intervention...`}
+                            : interventionMode === "sequence"
+                              ? "Submitting Strategy Sequence..."
+                              : `Submitting ${STRATEGY_LABELS[strategyType]} Intervention...`}
                         </PText>
                         <PText size="small" className="text-contrast-medium">
                           The worker will pick up the job and the page will poll lightweight status endpoints until the run finishes.
@@ -530,6 +663,7 @@ export default function SimulationPage() {
                     const states = roundStates[run.id] || [];
                     const isRunning = isActiveRun(run);
                     const isTrackedActiveRun = run.id === activeRunId && runStatus;
+                    const sequence = run.strategy_sequence ?? [];
                     return (
                       <div key={run.id} className="bg-surface border border-contrast-low rounded-lg overflow-hidden">
                         <div className="flex flex-col gap-static-sm px-fluid-sm py-static-md border-b border-contrast-low lg:flex-row lg:items-center lg:justify-between">
@@ -537,10 +671,13 @@ export default function SimulationPage() {
                             <PTag color={run.run_type === "baseline" ? "background-frosted" : "notification-warning-soft"}>
                               {run.run_type === "baseline" ? "Baseline" : "Intervention"}
                             </PTag>
-                            {run.strategy_type && (
+                            {sequence.length > 0 && (
+                              <PTag color="notification-info-soft">Sequence: {sequence.length} steps</PTag>
+                            )}
+                            {sequence.length === 0 && run.strategy_type && (
                               <PTag color="notification-info-soft">{STRATEGY_LABELS[run.strategy_type as StrategyType]}</PTag>
                             )}
-                            {run.injection_round && (
+                            {sequence.length === 0 && run.injection_round && (
                               <PText size="small" className="text-contrast-medium">@ Round {run.injection_round}</PText>
                             )}
                           </div>

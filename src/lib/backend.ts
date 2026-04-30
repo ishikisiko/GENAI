@@ -22,6 +22,7 @@ import type {
   SourceTopic,
   SourceTopicAssignment,
   SourceUsageResponse,
+  StrategySequenceStep,
   StrategyType,
 } from "./types";
 
@@ -213,6 +214,7 @@ export interface SubmitSimulationRequest {
   strategy_type?: StrategyType;
   strategy_message?: string;
   injection_round?: number;
+  strategy_sequence?: StrategySequenceStep[];
 }
 
 export async function submitSimulation(payload: SubmitSimulationRequest): Promise<SimulationSubmissionResponse> {
