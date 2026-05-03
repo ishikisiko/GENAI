@@ -26,16 +26,23 @@ from backend.services.source_discovery_contracts import (
     SourceCandidateLibrarySaveRequest,
     SourceCandidateWrite,
     SourceDiscoveryJobPayload,
+    SourceDiscoveryPlanningContext,
 )
 from backend.services.source_discovery_service import (
     BraveSearchProvider,
+    FetchedContent,
     HttpContentFetcher,
+    MockContentFetcher,
     SearchResult,
+    SimpleCandidateScorer,
+    SimpleQueryExpander,
+    SimpleSourceClassifier,
     SourceDiscoveryService,
     build_source_discovery_content_fetcher,
     build_source_discovery_search_provider,
     brave_freshness_for_time_range,
 )
+from backend.services.semantic_source_recall import LocalSemanticIndex
 from backend.services.source_library_service import SourceLibraryService
 from backend.shared.errors import ApplicationError, ConfigurationError
 
@@ -545,6 +552,352 @@ def test_worker_pipeline_writes_deduped_candidates_with_scores_sorted():
     assert listed.candidates[0].total_score >= listed.candidates[1].total_score
     assert listed.candidates[0].scores.relevance > 0
     assert listed.candidates[0].claim_previews
+
+
+def test_candidate_relevance_downranks_generic_term_matches():
+    scorer = SimpleCandidateScorer()
+    request = SourceDiscoveryJobPayload(
+        source_discovery_job_id="discovery-123",
+        job_id="job-123",
+        case_id="case-123",
+        topic="Xibei pre-made dish incident social media",
+        description="Gather posts from Chinese social sites.",
+        region="China",
+        language="en",
+        time_range="last_30_days",
+        source_types=["social"],
+        max_sources=10,
+    )
+    result = SearchResult(
+        title="Xiao Zhan incident - Wikipedia",
+        url="https://en.wikipedia.org/wiki/Xiao_Zhan_boycott_incident",
+        snippet="A social media boycott incident involving a celebrity fandom.",
+        source_type="social",
+        provider="brave",
+    )
+
+    score = scorer.score(
+        request,
+        result,
+        content=FetchedContent(
+            content=(
+                "Xiao Zhan incident social media discussion. "
+                "The article covers a celebrity boycott and online fandom conflict."
+            ),
+            excerpt="",
+            metadata={},
+        ),
+        classification="official",
+        duplicate_index=0,
+    )
+
+    assert score.relevance <= 0.35
+    assert score.total() <= 0.45
+
+
+def test_candidate_relevance_rewards_specific_topic_matches():
+    scorer = SimpleCandidateScorer()
+    request = SourceDiscoveryJobPayload(
+        source_discovery_job_id="discovery-123",
+        job_id="job-123",
+        case_id="case-123",
+        topic="Xibei pre-made dish incident social media",
+        description="Gather posts from Chinese social sites.",
+        region="China",
+        language="en",
+        time_range="last_30_days",
+        source_types=["social"],
+        max_sources=10,
+    )
+    result = SearchResult(
+        title="Xibei pre-made dish incident trends across social media",
+        url="https://example.test/xibei",
+        snippet="Xibei customers discuss the pre-made dish controversy on social media.",
+        source_type="social",
+        provider="brave",
+    )
+
+    score = scorer.score(
+        request,
+        result,
+        content=FetchedContent(
+            content=(
+                "Xibei pre-made dish incident social media posts discuss restaurant responses, "
+                "consumer claims, and the evolving timeline."
+            ),
+            excerpt="",
+            metadata={},
+        ),
+        classification="social",
+        duplicate_index=0,
+    )
+
+    assert score.relevance >= 0.8
+
+
+def test_candidate_relevance_uses_bounded_semantic_support_for_core_matches():
+    request = SourceDiscoveryJobPayload(
+        source_discovery_job_id="discovery-123",
+        job_id="job-123",
+        case_id="case-123",
+        topic="Battery recall fire reports",
+        description="battery overheating safety recall",
+        region="US",
+        language="en",
+        time_range="last_30_days",
+        source_types=["news"],
+        max_sources=10,
+    )
+    result = SearchResult(
+        title="Battery recall expands after overheating reports",
+        url="https://example.test/battery",
+        snippet="Regulators cite fire risk in recalled battery packs.",
+        source_type="news",
+    )
+    content = FetchedContent(
+        content="Battery recall documents describe overheating, fire reports, and consumer safety claims.",
+        excerpt="",
+        metadata={},
+    )
+
+    lexical_score = SimpleCandidateScorer().score(request, result, content, "news", 0)
+    semantic_score = SimpleCandidateScorer(LocalSemanticIndex()).score(request, result, content, "news", 0)
+
+    assert semantic_score.relevance >= lexical_score.relevance
+    assert semantic_score.relevance <= 1.0
+
+
+def test_semantic_support_does_not_bypass_core_relevance_gate():
+    scorer = SimpleCandidateScorer(LocalSemanticIndex())
+    request = SourceDiscoveryJobPayload(
+        source_discovery_job_id="discovery-123",
+        job_id="job-123",
+        case_id="case-123",
+        topic="Xibei pre-made dish incident social media",
+        description="Gather posts from Chinese social sites.",
+        region="China",
+        language="en",
+        time_range="last_30_days",
+        source_types=["social"],
+        max_sources=10,
+    )
+    result = SearchResult(
+        title="Xiao Zhan incident - Wikipedia",
+        url="https://en.wikipedia.org/wiki/Xiao_Zhan_boycott_incident",
+        snippet="A social media incident involving a celebrity fandom.",
+        source_type="social",
+        provider="brave",
+    )
+    content = FetchedContent(
+        content=(
+            "China social media incident discussion with timeline details. "
+            "The article covers a celebrity boycott and online fandom conflict."
+        ),
+        excerpt="",
+        metadata={},
+    )
+
+    score = scorer.score(request, result, content, "official", 0)
+
+    assert score.relevance <= 0.35
+    assert score.total() <= 0.45
+
+
+def test_candidate_relevance_matches_chinese_event_variants():
+    scorer = SimpleCandidateScorer()
+    request = SourceDiscoveryJobPayload(
+        source_discovery_job_id="discovery-123",
+        job_id="job-123",
+        case_id="case-123",
+        topic="西贝预制菜事件",
+        description="关注罗永浩、西贝官方回应和预制菜争议。",
+        region="中国",
+        language="zh",
+        time_range="last_30_days",
+        source_types=["news"],
+        max_sources=10,
+        planning_context=SourceDiscoveryPlanningContext(
+            core_entities=["西贝", "预制菜"],
+            actor_names=["罗永浩", "贾国龙"],
+            event_aliases=["西贝预制菜风波", "预制菜之争", "罗永浩吐槽西贝事件"],
+        ),
+    )
+    result = SearchResult(
+        title="西贝预制菜之争：民众和餐饮专家在关心什么？",
+        url="https://www.bbc.com/zhongwen/articles/example",
+        snippet="罗永浩发文后，西贝回应预制菜争议。",
+        source_type="news",
+        provider="brave",
+    )
+    score = scorer.score(
+        request,
+        result,
+        FetchedContent(content="西贝预制菜风波持续发酵，罗永浩与贾国龙先后回应。", excerpt="", metadata={}),
+        "news",
+        0,
+    )
+
+    assert score.relevance >= 0.8
+
+
+def test_candidate_relevance_downranks_chinese_generic_social_background():
+    scorer = SimpleCandidateScorer()
+    request = SourceDiscoveryJobPayload(
+        source_discovery_job_id="discovery-123",
+        job_id="job-123",
+        case_id="case-123",
+        topic="西贝预制菜事件",
+        description="",
+        region="中国",
+        language="zh",
+        time_range="last_30_days",
+        source_types=["social"],
+        max_sources=10,
+    )
+    result = SearchResult(
+        title="中国社交媒体平台完整指南",
+        url="https://example.org/chinese-social-media-platforms",
+        snippet="介绍微博、微信、抖音和小红书等平台。",
+        source_type="social",
+        provider="brave",
+    )
+    score = scorer.score(
+        request,
+        result,
+        FetchedContent(content="这是一篇关于社交媒体平台和营销渠道的背景介绍。", excerpt="", metadata={}),
+        "social",
+        0,
+    )
+
+    assert score.relevance <= 0.25
+    assert score.grounding_value <= 0.35
+
+
+def test_query_expander_generates_evidence_bucketed_chinese_queries():
+    request = SourceDiscoveryJobPayload(
+        source_discovery_job_id="discovery-123",
+        job_id="job-123",
+        case_id="case-123",
+        topic="西贝预制菜事件",
+        description="",
+        region="中国",
+        language="zh",
+        time_range="last_30_days",
+        source_types=["news", "official", "social"],
+        max_sources=10,
+        planning_context=SourceDiscoveryPlanningContext(
+            core_entities=["西贝", "预制菜"],
+            actor_names=["罗永浩"],
+            event_aliases=["预制菜之争"],
+        ),
+    )
+
+    queries = SimpleQueryExpander().expand(request)
+
+    assert len(queries) <= 6
+    assert any(query.startswith("timeline:") for query in queries)
+    assert any(query.startswith("official_response:") for query in queries)
+    assert any(query.startswith("regulatory_context:") for query in queries)
+    assert any(query.startswith("social_evidence:") for query in queries)
+    assert any("西贝" in query and "罗永浩" in query for query in queries)
+
+
+def test_classifier_keeps_media_article_with_official_quotes_as_news():
+    classifier = SimpleSourceClassifier()
+    result = SearchResult(
+        title="Restaurant chain apologizes after official statement",
+        url="https://www.bbc.com/news/example",
+        snippet="The article quotes regulators and official statements.",
+        source_type="official",
+        provider="brave",
+    )
+
+    classification = classifier.classify(
+        result,
+        FetchedContent(content="Regulators said the company issued an official statement.", excerpt="", metadata={}),
+    )
+
+    assert classification == "news"
+
+
+def test_classifier_uses_source_identity_for_official_and_social_sources():
+    classifier = SimpleSourceClassifier()
+
+    official = classifier.classify(
+        SearchResult(
+            title="市场监管总局公告",
+            url="https://www.samr.gov.cn/notice",
+            snippet="监管公告",
+            source_type="news",
+            provider="brave",
+        ),
+        FetchedContent(content="官方公告", excerpt="", metadata={}),
+    )
+    social = classifier.classify(
+        SearchResult(
+            title="罗永浩微博原文",
+            url="https://weibo.com/example",
+            snippet="用户发帖",
+            source_type="news",
+            provider="brave",
+        ),
+        FetchedContent(content="微博用户评论", excerpt="", metadata={}),
+    )
+
+    assert official == "official"
+    assert social == "social"
+
+
+def test_real_provider_discovery_filters_mock_or_test_candidates():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "web": {
+                    "results": [
+                        {
+                            "title": "Mock test result",
+                            "url": "https://mock.search/test",
+                            "description": "西贝预制菜事件",
+                        }
+                    ]
+                }
+            },
+        )
+
+    source_repository = _FakeSourceRepository()
+    service = SourceDiscoveryService(
+        source_repository=source_repository,
+        job_repository=_FakeJobRepository(),
+        extraction_repository=_FakeExtractionRepository(),
+        search_provider=BraveSearchProvider(
+            api_key="token",
+            rate_limit_seconds=0,
+            transport=httpx.MockTransport(handler),
+        ),
+        content_fetcher=MockContentFetcher(),
+    )
+    job = Job(
+        id="job-123",
+        job_type=SOURCE_DISCOVERY_JOB_TYPE,
+        status=JobStatus.PENDING,
+        payload={
+            "source_discovery_job_id": "discovery-123",
+            "case_id": "case-123",
+            "topic": "西贝预制菜事件",
+            "description": "",
+            "region": "中国",
+            "language": "zh",
+            "time_range": "last_30_days",
+            "source_types": ["news"],
+            "max_sources": 5,
+        },
+    )
+
+    outcome = asyncio.run(service.handle_job(job))
+
+    assert outcome["candidate_count"] == 0
+    assert source_repository.candidates == []
 
 
 def test_evidence_pack_requires_accepted_candidates_and_then_creates_pack():

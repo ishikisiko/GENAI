@@ -21,6 +21,10 @@ export default function Dashboard() {
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoError, setDemoError] = useState<string | null>(null);
   const [demoExists, setDemoExists] = useState(false);
+  const [confirmDeleteCaseId, setConfirmDeleteCaseId] = useState<string | null>(null);
+  const [deletingCaseId, setDeletingCaseId] = useState<string | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [dashboardSuccess, setDashboardSuccess] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const fetchCases = useCallback(async () => {
@@ -59,6 +63,28 @@ export default function Dashboard() {
       setDemoError(getErrorMessage(error, "Failed to load demo. Please try again."));
       setDemoLoading(false);
     }
+  }
+
+  async function handleDeleteCase(targetCase: CrisisCase) {
+    setDeletingCaseId(targetCase.id);
+    setDashboardError(null);
+    setDashboardSuccess(null);
+
+    const { error } = await supabase.from("crisis_cases").delete().eq("id", targetCase.id);
+
+    if (error) {
+      setDashboardError(getErrorMessage(error, t("dashboard.deleteFailed")));
+      setDeletingCaseId(null);
+      return;
+    }
+
+    setCases((currentCases) => currentCases.filter((item) => item.id !== targetCase.id));
+    if (targetCase.id === DEMO_CASE_ID) {
+      setDemoExists(false);
+    }
+    setConfirmDeleteCaseId(null);
+    setDeletingCaseId(null);
+    setDashboardSuccess(t("dashboard.deleteSuccess"));
   }
 
   const getNextStep = (c: CrisisCase) => {
@@ -120,6 +146,28 @@ export default function Dashboard() {
               state="error"
               dismissButton
               onDismiss={() => setDemoError(null)}
+            />
+          </div>
+        )}
+        {dashboardError && (
+          <div className="mb-fluid-sm w-full">
+            <PInlineNotification
+              heading={t("common.error")}
+              description={dashboardError}
+              state="error"
+              dismissButton
+              onDismiss={() => setDashboardError(null)}
+            />
+          </div>
+        )}
+        {dashboardSuccess && (
+          <div className="mb-fluid-sm w-full">
+            <PInlineNotification
+              heading={t("common.success")}
+              description={dashboardSuccess}
+              state="success"
+              dismissButton
+              onDismiss={() => setDashboardSuccess(null)}
             />
           </div>
         )}
@@ -185,7 +233,11 @@ export default function Dashboard() {
             <PDivider className="mb-fluid-sm" />
 
             <div className="flex flex-col gap-static-md">
-              {cases.map((c) => (
+              {cases.map((c) => {
+                const isConfirmingDelete = confirmDeleteCaseId === c.id;
+                const isDeleting = deletingCaseId === c.id;
+
+                return (
                 <div
                   key={c.id}
                   className="bg-surface border border-contrast-low rounded-lg p-fluid-md hover:border-contrast-medium transition-colors cursor-pointer group"
@@ -209,17 +261,63 @@ export default function Dashboard() {
                         {c.description || "No description provided."}
                       </PText>
                     </div>
-                    <div className="shrink-0">
+                    <div className="shrink-0 flex items-center gap-static-xs">
                       <PButton
                         variant="secondary"
                         onClick={(e) => { e.stopPropagation(); navigate(getNextStep(c)); }}
                       >
                         {getNextStepLabel(c)}
                       </PButton>
+                      <PButtonPure
+                        icon="delete"
+                        className="text-error"
+                        disabled={Boolean(deletingCaseId)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDashboardError(null);
+                          setDashboardSuccess(null);
+                          setConfirmDeleteCaseId((currentId) => (currentId === c.id ? null : c.id));
+                        }}
+                      >
+                        {t("common.delete")}
+                      </PButtonPure>
                     </div>
                   </div>
+                  {isConfirmingDelete && (
+                    <div
+                      className="mt-fluid-sm border-t border-contrast-low pt-fluid-sm"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex flex-col gap-static-sm sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <PText size="small" weight="semi-bold">{t("dashboard.deleteConfirmTitle")}</PText>
+                          <PText size="small" className="text-contrast-medium">
+                            {t("dashboard.deleteConfirmDesc")}
+                          </PText>
+                        </div>
+                        <div className="flex items-center gap-static-sm shrink-0">
+                          <PButton
+                            variant="secondary"
+                            disabled={isDeleting}
+                            onClick={() => setConfirmDeleteCaseId(null)}
+                          >
+                            {t("common.cancel")}
+                          </PButton>
+                          <PButton
+                            icon="delete"
+                            loading={isDeleting}
+                            disabled={Boolean(deletingCaseId)}
+                            onClick={() => void handleDeleteCase(c)}
+                          >
+                            {t("dashboard.confirmDelete")}
+                          </PButton>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

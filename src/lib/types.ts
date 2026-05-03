@@ -22,6 +22,8 @@ export interface CrisisCase {
   status: CaseStatus;
   created_at: string;
   updated_at: string;
+  source_discovery_assistant_response?: SourceDiscoveryAssistantResponse | null;
+  source_discovery_assistant_updated_at?: string | null;
 }
 
 export interface SourceDocument {
@@ -497,6 +499,20 @@ export interface EvidencePackGroundingResponse extends GraphExtractionSubmission
 
 export type SourceDiscoveryAssistantMode = "search_planning" | "source_interpretation" | "search_backed_briefing";
 
+export interface SourceDiscoveryEvidenceBucketHint {
+  key: string;
+  label?: string;
+  queries: string[];
+}
+
+export interface SourceDiscoveryPlanningContext {
+  core_entities: string[];
+  actor_names: string[];
+  event_aliases: string[];
+  language_variants: string[];
+  evidence_buckets: SourceDiscoveryEvidenceBucketHint[];
+}
+
 export interface SourceDiscoveryAssistantRequest {
   mode: SourceDiscoveryAssistantMode;
   question?: string;
@@ -529,6 +545,11 @@ export interface SourceDiscoveryAssistantPlanningSuggestion {
   time_range: string | null;
   source_types: string[];
   queries: string[];
+  core_entities?: string[];
+  actor_names?: string[];
+  event_aliases?: string[];
+  language_variants?: string[];
+  evidence_buckets?: SourceDiscoveryEvidenceBucketHint[];
 }
 
 export interface SourceDiscoveryAssistantRecommendedSettings {
@@ -540,6 +561,11 @@ export interface SourceDiscoveryAssistantRecommendedSettings {
   source_types: string[];
   max_sources: number | null;
   queries: string[];
+  core_entities?: string[];
+  actor_names?: string[];
+  event_aliases?: string[];
+  language_variants?: string[];
+  evidence_buckets?: SourceDiscoveryEvidenceBucketHint[];
 }
 
 export interface SourceDiscoveryAssistantSourceSummary {

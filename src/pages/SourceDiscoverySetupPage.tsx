@@ -13,6 +13,8 @@ import type {
   CrisisCase,
   SourceDiscoveryAssistantPlanningSuggestion,
   SourceDiscoveryAssistantRecommendedSettings,
+  SourceDiscoveryAssistantResponse,
+  SourceDiscoveryPlanningContext,
 } from "../lib/types";
 import { useI18n } from "../lib/i18n";
 
@@ -25,6 +27,51 @@ const TIME_RANGE_PRESETS = [
   { value: "last_365_days", label: "Last year" },
   { value: "anytime", label: "Any time" },
 ];
+
+function appendUnique(values: string[], nextValues: readonly string[] | undefined) {
+  for (const value of nextValues ?? []) {
+    const normalized = value.trim();
+    if (normalized && !values.includes(normalized)) {
+      values.push(normalized);
+    }
+  }
+}
+
+function buildPlanningContext(response: SourceDiscoveryAssistantResponse | null | undefined): SourceDiscoveryPlanningContext | null {
+  if (!response) return null;
+
+  const context: SourceDiscoveryPlanningContext = {
+    core_entities: [],
+    actor_names: [],
+    event_aliases: [],
+    language_variants: [],
+    evidence_buckets: [],
+  };
+
+  const addFrom = (item: SourceDiscoveryAssistantPlanningSuggestion | SourceDiscoveryAssistantRecommendedSettings | null) => {
+    if (!item) return;
+    appendUnique(context.core_entities, item.core_entities);
+    appendUnique(context.actor_names, item.actor_names);
+    appendUnique(context.event_aliases, item.event_aliases);
+    appendUnique(context.language_variants, item.language_variants);
+    for (const bucket of item.evidence_buckets ?? []) {
+      if (!context.evidence_buckets.some((current) => current.key === bucket.key)) {
+        context.evidence_buckets.push(bucket);
+      }
+    }
+  };
+
+  addFrom(response.recommended_settings);
+  response.planning_suggestions.forEach(addFrom);
+
+  return (
+    context.core_entities.length
+    || context.actor_names.length
+    || context.event_aliases.length
+    || context.language_variants.length
+    || context.evidence_buckets.length
+  ) ? context : null;
+}
 
 export default function SourceDiscoverySetupPage() {
   const { t } = useI18n();
@@ -92,6 +139,7 @@ export default function SourceDiscoverySetupPage() {
         time_range: timeRange,
         source_types: sourceTypes,
         max_sources: maxSources,
+        planning_context: buildPlanningContext(crisisCase?.source_discovery_assistant_response),
       });
       navigate(`/cases/${caseId}/source-discovery/${response.source_discovery_job_id}/review`);
     } catch (error: unknown) {
@@ -110,6 +158,32 @@ export default function SourceDiscoverySetupPage() {
     if (suggestion.time_range) setTimeRange(suggestion.time_range);
     if (suggestion.source_types.length > 0) setSourceTypes(suggestion.source_types);
     if ("max_sources" in suggestion && suggestion.max_sources) setMaxSources(suggestion.max_sources);
+  }
+
+  async function persistAssistantResponse(response: SourceDiscoveryAssistantResponse) {
+    if (!caseId) return;
+
+    const { error: updateError } = await supabase
+      .from("crisis_cases")
+      .update({
+        source_discovery_assistant_response: response,
+        source_discovery_assistant_updated_at: new Date().toISOString(),
+      })
+      .eq("id", caseId);
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    setCrisisCase((currentCase) => (
+      currentCase
+        ? {
+          ...currentCase,
+          source_discovery_assistant_response: response,
+          source_discovery_assistant_updated_at: new Date().toISOString(),
+        }
+        : currentCase
+    ));
   }
 
   if (loading) {
@@ -261,6 +335,7 @@ export default function SourceDiscoverySetupPage() {
 
           <div className="xl:col-span-2">
             <SourceDiscoveryAssistantPanel
+              key={caseId}
               title="LLM Source Assistant"
               description="Generate non-search planning guidance, or explicitly research a preliminary timeline with bounded searched sources."
               defaultQuestion="Help me generate search directions, keywords, source types, and a starting time range for this event."
@@ -290,6 +365,8 @@ export default function SourceDiscoverySetupPage() {
                 source_types: sourceTypes,
                 max_sources: maxSources,
               })}
+              initialResponse={crisisCase?.source_discovery_assistant_response ?? null}
+              onResponse={persistAssistantResponse}
               onApplySuggestion={applyAssistantSuggestion}
             />
           </div>

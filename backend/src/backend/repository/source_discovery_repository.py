@@ -53,6 +53,7 @@ class SourceDiscoveryRepository:
             "time_range": request.time_range,
             "source_types": request.source_types,
             "max_sources": request.max_sources,
+            "planning_context": request.planning_context.model_dump() if request.planning_context else None,
         }
 
         async with self._database.session() as session:

@@ -20,6 +20,8 @@ interface SourceDiscoveryAssistantPanelProps {
   buildRequest: (question: string) => SourceDiscoveryAssistantRequest;
   briefingQuestion?: string;
   buildBriefingRequest?: (question: string) => SourceDiscoveryAssistantRequest;
+  initialResponse?: SourceDiscoveryAssistantResponse | null;
+  onResponse?: (response: SourceDiscoveryAssistantResponse) => void | Promise<void>;
   onApplySuggestion?: (
     suggestion: SourceDiscoveryAssistantPlanningSuggestion | SourceDiscoveryAssistantRecommendedSettings,
   ) => void;
@@ -58,10 +60,12 @@ export default function SourceDiscoveryAssistantPanel({
   buildRequest,
   briefingQuestion,
   buildBriefingRequest,
+  initialResponse,
+  onResponse,
   onApplySuggestion,
 }: SourceDiscoveryAssistantPanelProps) {
   const [question, setQuestion] = useState(defaultQuestion);
-  const [response, setResponse] = useState<SourceDiscoveryAssistantResponse | null>(null);
+  const [response, setResponse] = useState<SourceDiscoveryAssistantResponse | null>(initialResponse ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -69,7 +73,9 @@ export default function SourceDiscoveryAssistantPanel({
     setLoading(true);
     setError("");
     try {
-      setResponse(await askSourceDiscoveryAssistant(requestBuilder(question.trim() || defaultQuestion)));
+      const nextResponse = await askSourceDiscoveryAssistant(requestBuilder(question.trim() || defaultQuestion));
+      setResponse(nextResponse);
+      await onResponse?.(nextResponse);
     } catch (error: unknown) {
       setError(getErrorMessage(error, "Assistant request failed."));
     }

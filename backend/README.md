@@ -31,6 +31,7 @@ backend-worker
 
 Async simulation rollout notes live in [docs/simulation-rollout.md](docs/simulation-rollout.md).
 Graph extraction rollout notes live in [docs/graph-extraction-rollout.md](docs/graph-extraction-rollout.md).
+Source discovery scoring notes live in [docs/source-discovery-scoring.md](docs/source-discovery-scoring.md).
 
 ## Design notes
 

@@ -17,6 +17,7 @@ import type {
   SourceDiscoveryAssistantRequest,
   SourceDiscoveryAssistantResponse,
   SourceDiscoveryJobResponse,
+  SourceDiscoveryPlanningContext,
   SourceDocumentSnapshotResponse,
   SourceRegistryListResponse,
   SourceTopic,
@@ -241,6 +242,7 @@ export interface CreateSourceDiscoveryJobRequest {
   time_range: string;
   source_types: string[];
   max_sources: number;
+  planning_context?: SourceDiscoveryPlanningContext | null;
 }
 
 export async function createSourceDiscoveryJob(

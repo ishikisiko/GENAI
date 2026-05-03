@@ -26,6 +26,17 @@ const REVIEW_COLORS: Record<CandidateReviewStatus, "background-frosted" | "notif
   rejected: "notification-error-soft",
 };
 
+const ACTIVE_DISCOVERY_STATUSES = new Set(["pending", "running"]);
+
+function isDiscoveryActive(job: SourceDiscoveryJobResponse | null): boolean {
+  if (!job) return false;
+  return Boolean(
+    job.should_poll
+    || ACTIVE_DISCOVERY_STATUSES.has(job.status)
+    || ACTIVE_DISCOVERY_STATUSES.has(job.job_status),
+  );
+}
+
 export default function CandidateSourcesReviewPage() {
   const { t } = useI18n();
   const { caseId, jobId } = useParams<{ caseId: string; jobId: string }>();
@@ -39,6 +50,8 @@ export default function CandidateSourcesReviewPage() {
   const [savingLibraryId, setSavingLibraryId] = useState("");
   const [addingCaseDocumentId, setAddingCaseDocumentId] = useState("");
   const [creatingPack, setCreatingPack] = useState(false);
+  const [polling, setPolling] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [candidateTopicSelections, setCandidateTopicSelections] = useState<Record<string, string>>({});
@@ -54,21 +67,27 @@ export default function CandidateSourcesReviewPage() {
     return { crisisCase: data, job: jobResponse, candidates: candidateResponse, topics: topicResponse };
   }, [caseId, jobId]);
 
-  const load = useCallback(async () => {
+  const applyPageData = useCallback((data: NonNullable<Awaited<ReturnType<typeof fetchPageData>>>) => {
+    setCrisisCase(data.crisisCase);
+    setJob(data.job);
+    setCandidates(data.candidates);
+    setTopics(data.topics);
+    setLastRefreshedAt(new Date().toLocaleTimeString());
+  }, []);
+
+  const load = useCallback(async (options: { showLoading?: boolean } = {}) => {
     if (!caseId || !jobId) return;
-    setLoading(true);
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) setLoading(true);
     try {
       const data = await fetchPageData();
       if (!data) return;
-      setCrisisCase(data.crisisCase);
-      setJob(data.job);
-      setCandidates(data.candidates);
-      setTopics(data.topics);
+      applyPageData(data);
     } catch (error: unknown) {
       setError(getErrorMessage(error, "Failed to load source candidates."));
     }
-    setLoading(false);
-  }, [caseId, fetchPageData, jobId]);
+    if (showLoading) setLoading(false);
+  }, [applyPageData, caseId, fetchPageData, jobId]);
 
   useEffect(() => {
     if (!caseId || !jobId) return undefined;
@@ -78,10 +97,7 @@ export default function CandidateSourcesReviewPage() {
       try {
         const data = await fetchPageData();
         if (cancelled || !data) return;
-        setCrisisCase(data.crisisCase);
-        setJob(data.job);
-        setCandidates(data.candidates);
-        setTopics(data.topics);
+        applyPageData(data);
       } catch (error: unknown) {
         if (cancelled) return;
         setError(getErrorMessage(error, "Failed to load source candidates."));
@@ -96,19 +112,63 @@ export default function CandidateSourcesReviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [caseId, fetchPageData, jobId]);
+  }, [applyPageData, caseId, fetchPageData, jobId]);
+
+  const isActive = isDiscoveryActive(job);
+  const discoveryStatusPath = job?.status_path;
 
   useEffect(() => {
-    if (!job?.should_poll || !jobId) return;
-    const timeoutId = window.setTimeout(() => {
-      void load();
-    }, 2000);
-    return () => window.clearTimeout(timeoutId);
-  }, [job?.should_poll, jobId, load]);
+    if (!jobId || !isActive) {
+      setPolling(false);
+      return undefined;
+    }
+
+    const currentJobId = jobId;
+    const statusPath = discoveryStatusPath || currentJobId;
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    async function pollDiscovery() {
+      setPolling(true);
+      try {
+        const [jobResponse, candidateResponse] = await Promise.all([
+          fetchSourceDiscoveryJob(statusPath),
+          fetchSourceCandidates({ discovery_job_id: currentJobId }),
+        ]);
+
+        if (cancelled) return;
+        setJob(jobResponse);
+        setCandidates(candidateResponse);
+        setLastRefreshedAt(new Date().toLocaleTimeString());
+
+        if (!isDiscoveryActive(jobResponse)) {
+          setPolling(false);
+          return;
+        }
+
+        timeoutId = window.setTimeout(() => {
+          void pollDiscovery();
+        }, 2000);
+      } catch (error: unknown) {
+        if (cancelled) return;
+        setError(getErrorMessage(error, "Failed to refresh discovery status."));
+        setPolling(false);
+      }
+    }
+
+    void pollDiscovery();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [discoveryStatusPath, isActive, jobId]);
 
   const acceptedCandidates = candidates.filter((candidate) => candidate.review_status === "accepted");
   const isFailed = job?.status === "failed" || job?.job_status === "failed";
-  const statusColor = job?.should_poll
+  const statusColor = isActive
     ? "notification-warning-soft"
     : isFailed
       ? "notification-error-soft"
@@ -229,12 +289,32 @@ export default function CandidateSourcesReviewPage() {
               <div className="bg-surface border border-contrast-low rounded-lg p-fluid-xl flex flex-col items-center gap-static-md text-center">
                 <PIcon name={isFailed ? "warning" : "document"} size="large" color="contrast-medium" />
                 <PText className="text-contrast-medium">
-                  {job?.should_poll
-                    ? "Discovery is still running."
+                  {isActive
+                    ? polling
+                      ? "Discovery is still running. This page is refreshing automatically."
+                      : "Discovery is still running."
                     : isFailed
                       ? "Discovery failed before candidates could be written."
                       : "No candidates were found."}
                 </PText>
+                {isActive && (
+                  <div className="flex flex-col items-center gap-static-xs">
+                    <PButton
+                      variant="secondary"
+                      icon="refresh"
+                      loading={polling}
+                      disabled={polling}
+                      onClick={() => void load({ showLoading: false })}
+                    >
+                      Refresh now
+                    </PButton>
+                    {lastRefreshedAt && (
+                      <PText size="x-small" className="text-contrast-low">
+                        Last checked {lastRefreshedAt}
+                      </PText>
+                    )}
+                  </div>
+                )}
                 {isFailed && (
                   <div className="bg-canvas rounded p-static-sm max-w-full text-left">
                     <PText size="small" weight="semi-bold">
@@ -398,8 +478,17 @@ export default function CandidateSourcesReviewPage() {
                 </div>
               </div>
 
-              {job?.should_poll && (
-                <PText size="small" className="text-contrast-medium">The worker is still discovering sources. Candidate results refresh automatically.</PText>
+              {isActive && (
+                <div className="flex flex-col gap-static-xs">
+                  <PText size="small" className="text-contrast-medium">
+                    {polling
+                      ? "The worker is still discovering sources. Candidate results refresh automatically."
+                      : "The worker is still discovering sources."}
+                  </PText>
+                  {lastRefreshedAt && (
+                    <PText size="x-small" className="text-contrast-low">Last checked {lastRefreshedAt}</PText>
+                  )}
+                </div>
               )}
               {isFailed && (
                 <PInlineNotification

@@ -282,6 +282,11 @@ class SourceDiscoveryAssistantService:
             "rationale": str(item.get("rationale") or item.get("summary") or ""),
             "source_types": [str(value) for value in cls._list_value(item.get("source_types")) if value],
             "queries": [str(value) for value in cls._list_value(item.get("queries")) if value],
+            "core_entities": cls._string_list(item.get("core_entities")),
+            "actor_names": cls._string_list(item.get("actor_names") or item.get("actors")),
+            "event_aliases": cls._string_list(item.get("event_aliases") or item.get("aliases")),
+            "language_variants": cls._string_list(item.get("language_variants")),
+            "evidence_buckets": cls._normalize_evidence_buckets(item.get("evidence_buckets")),
         }
 
     @classmethod
@@ -291,12 +296,46 @@ class SourceDiscoveryAssistantService:
         normalized = {**value}
         normalized["source_types"] = [str(item) for item in cls._list_value(value.get("source_types")) if item]
         normalized["queries"] = [str(item) for item in cls._list_value(value.get("queries")) if item]
+        normalized["core_entities"] = cls._string_list(value.get("core_entities"))
+        normalized["actor_names"] = cls._string_list(value.get("actor_names") or value.get("actors"))
+        normalized["event_aliases"] = cls._string_list(value.get("event_aliases") or value.get("aliases"))
+        normalized["language_variants"] = cls._string_list(value.get("language_variants"))
+        normalized["evidence_buckets"] = cls._normalize_evidence_buckets(value.get("evidence_buckets"))
         if normalized.get("max_sources") is not None:
             try:
                 normalized["max_sources"] = min(max(int(normalized["max_sources"]), 1), 50)
             except (TypeError, ValueError):
                 normalized["max_sources"] = None
         return normalized
+
+    @classmethod
+    def _string_list(cls, value: Any) -> list[str]:
+        normalized: list[str] = []
+        for item in cls._list_value(value):
+            text = str(item).strip()
+            if text and text not in normalized:
+                normalized.append(text)
+        return normalized
+
+    @classmethod
+    def _normalize_evidence_buckets(cls, value: Any) -> list[dict[str, Any]]:
+        buckets: list[dict[str, Any]] = []
+        for item in cls._list_value(value):
+            if isinstance(item, str):
+                buckets.append({"key": item, "label": item, "queries": []})
+                continue
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key") or item.get("name") or item.get("label") or "evidence").strip()
+            label = str(item.get("label") or item.get("name") or key).strip()
+            buckets.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "queries": [str(query) for query in cls._list_value(item.get("queries")) if query],
+                }
+            )
+        return buckets
 
     @staticmethod
     def _ensure_assistant_time_ranges(response: SourceDiscoveryAssistantResponse, requested_time_range: str) -> None:
@@ -416,7 +455,18 @@ Return ONLY a JSON object with this shape:
       "language": "optional language",
       "time_range": "optional time range",
       "source_types": ["news", "official"],
-      "queries": ["concrete query"]
+      "queries": ["concrete query"],
+      "core_entities": ["entity, brand, institution, or product name"],
+      "actor_names": ["person or organization name"],
+      "event_aliases": ["alternate event wording"],
+      "language_variants": ["same concept in another language or script"],
+      "evidence_buckets": [
+        {{"key": "timeline", "label": "event timeline", "queries": ["timeline-specific query"]}},
+        {{"key": "official_response", "label": "official or company response", "queries": ["official-response query"]}},
+        {{"key": "regulatory_context", "label": "regulatory or standards context", "queries": ["regulatory query"]}},
+        {{"key": "social_evidence", "label": "original social-media evidence", "queries": ["social evidence query"]}},
+        {{"key": "impact", "label": "business or public impact", "queries": ["impact query"]}}
+      ]
     }}
   ],
   "timeline": [],
@@ -479,7 +529,18 @@ Return ONLY a JSON object with this shape:
     "time_range": "recommended time range",
     "source_types": ["news", "official"],
     "max_sources": 12,
-    "queries": ["formal discovery query"]
+    "queries": ["formal discovery query"],
+    "core_entities": ["entity, brand, institution, or product name"],
+    "actor_names": ["person or organization name"],
+    "event_aliases": ["alternate event wording"],
+    "language_variants": ["same concept in another language or script"],
+    "evidence_buckets": [
+      {{"key": "timeline", "label": "event timeline", "queries": ["timeline-specific query"]}},
+      {{"key": "official_response", "label": "official or company response", "queries": ["official-response query"]}},
+      {{"key": "regulatory_context", "label": "regulatory or standards context", "queries": ["regulatory query"]}},
+      {{"key": "social_evidence", "label": "original social-media evidence", "queries": ["social evidence query"]}},
+      {{"key": "impact", "label": "business or public impact", "queries": ["impact query"]}}
+    ]
   }},
   "source_summaries": [
     {{

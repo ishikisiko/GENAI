@@ -12,6 +12,33 @@ from backend.services.extraction_contracts import GraphExtractionSubmissionRespo
 SOURCE_DISCOVERY_JOB_TYPE = "source_discovery.run"
 
 
+class SourceDiscoveryEvidenceBucketHint(BaseModel):
+    key: str
+    label: str = ""
+    queries: list[str] = Field(default_factory=list)
+
+
+class SourceDiscoveryPlanningContext(BaseModel):
+    core_entities: list[str] = Field(default_factory=list)
+    actor_names: list[str] = Field(default_factory=list)
+    event_aliases: list[str] = Field(default_factory=list)
+    language_variants: list[str] = Field(default_factory=list)
+    evidence_buckets: list[SourceDiscoveryEvidenceBucketHint] = Field(default_factory=list)
+
+    @field_validator("core_entities", "actor_names", "event_aliases", "language_variants", mode="before")
+    @classmethod
+    def normalize_string_list(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        raw_values = value if isinstance(value, list) else [value]
+        normalized: list[str] = []
+        for item in raw_values:
+            text = str(item).strip()
+            if text and text not in normalized:
+                normalized.append(text)
+        return normalized
+
+
 class SourceDiscoveryJobCreateRequest(BaseModel):
     case_id: str
     topic: str
@@ -21,6 +48,7 @@ class SourceDiscoveryJobCreateRequest(BaseModel):
     time_range: str = ""
     source_types: list[str] = Field(default_factory=lambda: ["news", "official", "social"])
     max_sources: int = Field(default=10, ge=1, le=50)
+    planning_context: SourceDiscoveryPlanningContext | None = None
 
     @field_validator("topic")
     @classmethod
@@ -60,15 +88,21 @@ class SourceScoreDimensions(BaseModel):
     grounding_value: float = 0.0
 
     def total(self) -> float:
-        values = [
+        quality_average = sum([
             self.relevance,
             self.authority,
             self.freshness,
             self.claim_richness,
             self.diversity,
             self.grounding_value,
-        ]
-        return round(sum(values) / len(values), 4)
+        ]) / 6
+
+        if self.relevance < 0.35:
+            quality_average = min(quality_average, 0.45)
+        elif self.relevance < 0.5:
+            quality_average = min(quality_average, 0.65)
+
+        return round(quality_average, 4)
 
 
 class SourceCandidateWrite(BaseModel):
@@ -262,6 +296,11 @@ class SourceDiscoveryAssistantPlanningSuggestion(BaseModel):
     time_range: str | None = None
     source_types: list[str] = Field(default_factory=list)
     queries: list[str] = Field(default_factory=list)
+    core_entities: list[str] = Field(default_factory=list)
+    actor_names: list[str] = Field(default_factory=list)
+    event_aliases: list[str] = Field(default_factory=list)
+    language_variants: list[str] = Field(default_factory=list)
+    evidence_buckets: list[SourceDiscoveryEvidenceBucketHint] = Field(default_factory=list)
 
 
 class SourceDiscoveryAssistantRecommendedSettings(BaseModel):
@@ -273,6 +312,11 @@ class SourceDiscoveryAssistantRecommendedSettings(BaseModel):
     source_types: list[str] = Field(default_factory=list)
     max_sources: int | None = Field(default=None, ge=1, le=50)
     queries: list[str] = Field(default_factory=list)
+    core_entities: list[str] = Field(default_factory=list)
+    actor_names: list[str] = Field(default_factory=list)
+    event_aliases: list[str] = Field(default_factory=list)
+    language_variants: list[str] = Field(default_factory=list)
+    evidence_buckets: list[SourceDiscoveryEvidenceBucketHint] = Field(default_factory=list)
 
 
 class SourceDiscoveryAssistantSourceSummary(BaseModel):

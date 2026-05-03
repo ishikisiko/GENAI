@@ -40,6 +40,7 @@ from backend.services.source_discovery_contracts import (
     SourceDiscoverySubmissionResponse,
     SourceScoreDimensions,
 )
+from backend.services.semantic_source_recall import LocalSemanticIndex
 from backend.shared.config import BackendConfig
 from backend.shared.errors import ApplicationError, ConfigurationError, DependencyError, ErrorCode
 from backend.shared.logging import get_logger
@@ -108,6 +109,105 @@ _CUSTOM_DATE_RANGE_RE = re.compile(
     re.IGNORECASE,
 )
 _RELATIVE_DAYS_RE = re.compile(r"^(?:last|past)[_\s-]*(?P<days>\d+)[_\s-]*days?$", re.IGNORECASE)
+_TOPIC_TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
+_GENERIC_RELEVANCE_TOKENS = {
+    "about",
+    "after",
+    "before",
+    "case",
+    "china",
+    "chinese",
+    "crisis",
+    "dish",
+    "event",
+    "evidence",
+    "incident",
+    "latest",
+    "made",
+    "media",
+    "official",
+    "pre",
+    "report",
+    "reports",
+    "social",
+    "source",
+    "sources",
+    "statement",
+    "timeline",
+    "update",
+    "事件",
+    "风波",
+    "爭議",
+    "争议",
+    "之争",
+    "新聞",
+    "新闻",
+    "媒體",
+    "媒体",
+    "社交",
+    "社交媒体",
+    "平台",
+    "時間線",
+    "时间线",
+    "來源",
+    "来源",
+    "官方",
+    "回应",
+    "回應",
+    "监管",
+    "監管",
+    "标准",
+    "標準",
+    "报道",
+    "報道",
+}
+_EVIDENCE_BUCKET_QUERIES = {
+    "timeline": ["时间线", "始末", "9月10日", "timeline"],
+    "official_response": ["官方回应", "道歉信", "声明", "贾国龙"],
+    "regulatory_context": ["国家标准", "餐饮", "明示", "监管"],
+    "social_evidence": ["微博", "原文", "直播", "罗永浩"],
+    "impact": ["关店", "营收", "客流", "影响"],
+}
+_OFFICIAL_DOMAIN_PARTS = ("gov.", ".gov", "gov.cn", "samr.gov.cn", "xibei.com")
+_MEDIA_DOMAIN_PARTS = (
+    "bbc.com",
+    "thepaper.cn",
+    "qq.com",
+    "yicaiglobal.com",
+    "sixthtone.com",
+    "chinadaily.com.cn",
+    "globaltimes.cn",
+    "thebeijinger.com",
+    "kr-asia.com",
+    "jiemian.com",
+    "21jingji.com",
+    "bjnews.com.cn",
+    "scol.com.cn",
+    "citynewsservice.cn",
+    "worldofchinese.com",
+)
+_SOCIAL_DOMAIN_PARTS = (
+    "weibo.com",
+    "douyin.com",
+    "bilibili.com",
+    "xiaohongshu.com",
+    "zhihu.com",
+    "substack.com",
+    "youtube.com",
+    "twitter.com",
+    "x.com",
+)
+_RESEARCH_DOMAIN_PARTS = ("edu", "ac.", "research", "scholar", "cnki")
+_GENERIC_BACKGROUND_TERMS = (
+    "wikipedia",
+    "guide to",
+    "platforms",
+    "social platforms",
+    "社交媒体平台",
+    "社交平台",
+    "百科",
+)
 
 
 def brave_freshness_for_time_range(
@@ -184,21 +284,25 @@ def brave_freshness_for_time_range(
 
 class SimpleQueryExpander:
     def expand(self, request: SourceDiscoveryJobPayload) -> list[str]:
-        base = " ".join(part for part in [request.topic, request.region, request.description] if part).strip()
-        source_type_terms = " OR ".join(request.source_types[:4])
-        queries = [base or request.topic]
-        if request.region:
-            queries.append(f"{request.topic} {request.region} crisis sources")
-        if source_type_terms:
-            queries.append(f"{request.topic} ({source_type_terms}) evidence")
-        if request.time_range:
-            queries.append(f"{request.topic} {request.time_range} latest")
+        core_terms = _core_search_terms(request)
+        base = " ".join(part for part in [core_terms, request.region] if part).strip() or request.topic
+        queries = [f"timeline: {base} {' '.join(_EVIDENCE_BUCKET_QUERIES['timeline'][:3])}"]
+        bucket_order = ["official_response", "regulatory_context", "social_evidence", "impact"]
+        for bucket in bucket_order:
+            terms = _EVIDENCE_BUCKET_QUERIES[bucket]
+            queries.append(f"{bucket}: {base} {' '.join(terms[:4])}")
+        for bucket in request.planning_context.evidence_buckets if request.planning_context else []:
+            for query in bucket.queries:
+                label = bucket.key or bucket.label or "assistant"
+                queries.append(f"{label}: {query}")
+        if request.description and not _has_cjk(request.description):
+            queries.append(f"context: {request.topic} {request.description}")
         deduped: list[str] = []
         for query in queries:
             normalized = " ".join(query.split())
             if normalized and normalized not in deduped:
                 deduped.append(normalized)
-        return deduped[:4]
+        return deduped[:6]
 
 
 class MockSearchProvider:
@@ -502,17 +606,31 @@ class HttpContentFetcher:
 
 class SimpleSourceClassifier:
     def classify(self, result: SearchResult, content: FetchedContent) -> str:
-        lowered = f"{result.source_type} {result.title} {content.content}".lower()
-        if "official" in lowered or "statement" in lowered or "regulator" in lowered:
-            return "official"
-        if "social" in lowered or "complaint" in lowered or "community" in lowered:
+        domain = _domain_for_url(result.url)
+        lowered = f"{result.source_type} {result.title} {content.content[:1200]} {domain}".lower()
+        if _domain_matches(domain, _MEDIA_DOMAIN_PARTS):
+            return "news"
+        if _domain_matches(domain, _SOCIAL_DOMAIN_PARTS):
             return "social"
-        if "research" in lowered or "academic" in lowered:
+        if _domain_matches(domain, _RESEARCH_DOMAIN_PARTS) or any(term in lowered for term in ("research", "academic")):
             return "research"
+        if _domain_matches(domain, _OFFICIAL_DOMAIN_PARTS):
+            return "official"
+        if result.source_type == "official" and not _domain_matches(domain, _MEDIA_DOMAIN_PARTS + _SOCIAL_DOMAIN_PARTS):
+            official_source_signals = ("official update", "official statement", "press release", "公告", "声明")
+            if any(signal in lowered for signal in official_source_signals):
+                return "official"
+        if result.source_type in {"social", "complaint"} or any(
+            term in lowered for term in ("community", "forum", "weibo", "微博", "评论", "用户")
+        ):
+            return "social"
         return "news"
 
 
 class SimpleCandidateScorer:
+    def __init__(self, semantic_index: LocalSemanticIndex | None = None) -> None:
+        self._semantic_index = semantic_index
+
     def score(
         self,
         request: SourceDiscoveryJobPayload,
@@ -521,10 +639,27 @@ class SimpleCandidateScorer:
         classification: str,
         duplicate_index: int,
     ) -> SourceScoreDimensions:
-        topic_tokens = {token for token in request.topic.lower().split() if len(token) > 2}
+        topic_tokens = _relevance_tokens(request.topic, request)
+        specific_tokens = [token for token in topic_tokens if token not in _GENERIC_RELEVANCE_TOKENS]
+        generic_tokens = [token for token in topic_tokens if token in _GENERIC_RELEVANCE_TOKENS]
         haystack = f"{result.title} {result.snippet} {content.content}".lower()
-        matched = sum(1 for token in topic_tokens if token in haystack)
-        relevance = min(1.0, 0.45 + (matched / max(len(topic_tokens), 1)) * 0.55)
+        matched_specific = sum(1 for token in specific_tokens if token in haystack)
+        matched_generic = sum(1 for token in generic_tokens if token in haystack)
+        specific_denominator = max(min(len(specific_tokens), 4), 1)
+        specific_ratio = min(1.0, matched_specific / specific_denominator)
+        generic_ratio = matched_generic / max(len(generic_tokens), 1)
+        phrase_match = any(phrase in haystack for phrase in _relevance_phrases(request))
+        semantic_support = self._semantic_support(request, result, content)
+        relevance = 0.15 + (specific_ratio * 0.65) + (generic_ratio * 0.15)
+        if phrase_match:
+            relevance += 0.15
+        if semantic_support and (matched_specific > 0 or not specific_tokens):
+            relevance += semantic_support * 0.1
+        if specific_tokens and matched_specific == 0:
+            relevance = min(relevance, 0.35)
+        if _is_generic_background_source(result, content) and matched_specific == 0:
+            relevance = min(relevance, 0.25)
+        relevance = min(1.0, relevance)
 
         authority_by_type = {
             "official": 0.95,
@@ -542,6 +677,8 @@ class SimpleCandidateScorer:
         claim_richness = min(1.0, 0.35 + content.content.lower().count("claim") * 0.15 + len(content.content) / 1600)
         diversity = max(0.35, 1.0 - duplicate_index * 0.12)
         grounding_value = round((relevance * 0.4) + (authority * 0.25) + (claim_richness * 0.25) + (diversity * 0.1), 4)
+        if _is_generic_background_source(result, content) and matched_specific == 0:
+            grounding_value = min(grounding_value, 0.35)
 
         return SourceScoreDimensions(
             relevance=round(relevance, 4),
@@ -551,6 +688,134 @@ class SimpleCandidateScorer:
             diversity=round(diversity, 4),
             grounding_value=grounding_value,
         )
+
+    def _semantic_support(
+        self,
+        request: SourceDiscoveryJobPayload,
+        result: SearchResult,
+        content: FetchedContent,
+    ) -> float:
+        if self._semantic_index is None:
+            return 0.0
+        query_text = normalize_whitespace(" ".join([request.topic, request.description, request.region]))
+        candidate_text = normalize_whitespace(" ".join([result.title, result.snippet, content.content[:4000]]))
+        if not query_text or not candidate_text:
+            return 0.0
+        return self._semantic_index.similarity(
+            self._semantic_index.embed(query_text),
+            self._semantic_index.embed(candidate_text),
+        )
+
+
+def _relevance_tokens(value: str, request: SourceDiscoveryJobPayload | None = None) -> list[str]:
+    tokens: list[str] = []
+    raw_values = [value]
+    if request is not None:
+        if _has_cjk(request.description):
+            raw_values.append(request.description)
+        if request.planning_context:
+            raw_values.extend(request.planning_context.core_entities)
+            raw_values.extend(request.planning_context.actor_names)
+            raw_values.extend(request.planning_context.event_aliases)
+            raw_values.extend(request.planning_context.language_variants)
+    for raw_value in raw_values:
+        for token in _TOPIC_TOKEN_RE.findall(raw_value.lower()):
+            if len(token) <= 2 and not re.search(r"[\u4e00-\u9fff]", token):
+                continue
+            for expanded in _expand_relevance_token(token):
+                if expanded not in tokens:
+                    tokens.append(expanded)
+    return tokens
+
+
+def _expand_relevance_token(token: str) -> list[str]:
+    if not _has_cjk(token):
+        return [token]
+    candidates: list[str] = []
+    for cjk_value in _CJK_RE.findall(token):
+        _append_unique(candidates, cjk_value)
+        for suffix in ("事件", "風波", "风波", "爭議", "争议", "之争", "危机", "危機"):
+            if cjk_value.endswith(suffix) and len(cjk_value) > len(suffix) + 1:
+                _append_unique(candidates, cjk_value[: -len(suffix)])
+        for size in (2, 3, 4, 5):
+            for index in range(0, max(len(cjk_value) - size + 1, 0)):
+                piece = cjk_value[index : index + size]
+                if piece not in _GENERIC_RELEVANCE_TOKENS:
+                    _append_unique(candidates, piece)
+    return candidates or [token]
+
+
+def _relevance_phrases(request: SourceDiscoveryJobPayload) -> list[str]:
+    phrases = [normalize_whitespace(request.topic).lower()]
+    if request.planning_context:
+        phrases.extend(value.lower() for value in request.planning_context.event_aliases)
+        phrases.extend(value.lower() for value in request.planning_context.core_entities)
+    return [phrase for phrase in phrases if phrase]
+
+
+def _core_search_terms(request: SourceDiscoveryJobPayload) -> str:
+    terms: list[str] = []
+    if request.planning_context:
+        for value in [
+            *request.planning_context.core_entities,
+            *request.planning_context.actor_names,
+            *request.planning_context.event_aliases,
+            *request.planning_context.language_variants,
+        ]:
+            _append_unique(terms, value)
+    if not terms:
+        for token in _relevance_tokens(request.topic, request):
+            if token not in _GENERIC_RELEVANCE_TOKENS:
+                _append_unique(terms, token)
+            if len(terms) >= 4:
+                break
+    if not terms:
+        _append_unique(terms, request.topic)
+    return " ".join(terms[:6])
+
+
+def _is_generic_background_source(result: SearchResult, content: FetchedContent) -> bool:
+    haystack = f"{result.title} {result.url} {result.snippet} {content.excerpt}".lower()
+    return any(term in haystack for term in _GENERIC_BACKGROUND_TERMS)
+
+
+def _domain_for_url(url: str | None) -> str:
+    if not url:
+        return ""
+    return urlparse(url).netloc.lower().removeprefix("www.")
+
+
+def _domain_matches(domain: str, parts: tuple[str, ...]) -> bool:
+    return bool(domain) and any(part in domain for part in parts)
+
+
+def _has_cjk(value: str) -> bool:
+    return bool(_CJK_RE.search(value))
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    normalized = normalize_whitespace(value).lower()
+    if normalized and normalized not in values:
+        values.append(normalized)
+
+
+def _query_text(query: str) -> str:
+    label, separator, value = query.partition(":")
+    if separator and re.fullmatch(r"[a-zA-Z0-9_-]{3,32}", label.strip()):
+        return value.strip()
+    return query
+
+
+def _is_mock_or_test_result(result: SearchResult) -> bool:
+    domain = _domain_for_url(result.url)
+    metadata = result.metadata or {}
+    return (
+        result.provider == "mock"
+        or domain == "mock.search"
+        or bool(metadata.get("mock"))
+        or domain.endswith(".test")
+        or "example.test" in domain
+    )
 
 
 class SimplePreviewExtractor:
@@ -617,6 +882,7 @@ class SourceDiscoveryService:
         self._classifier = classifier or SimpleSourceClassifier()
         self._scorer = scorer or SimpleCandidateScorer()
         self._preview_extractor = preview_extractor or SimplePreviewExtractor()
+        self._allow_mock_results = not isinstance(self._search_provider, BraveSearchProvider)
         self._logger = get_logger("backend.source_discovery")
 
     async def submit(self, request: SourceDiscoveryJobCreateRequest) -> SourceDiscoverySubmissionResponse:
@@ -721,8 +987,11 @@ class SourceDiscoveryService:
         candidates: list[SourceCandidateWrite] = []
         duplicate_index = 0
         for query in queries:
-            results = await self._search_provider.search(query, payload)
+            search_query = _query_text(query)
+            results = await self._search_provider.search(search_query, payload)
             for result in results:
+                if _is_mock_or_test_result(result) and not self._allow_mock_results:
+                    continue
                 canonical_url = canonicalize_url(result.url)
                 content = await self._content_fetcher.fetch(result)
                 content_hash = hash_content(content.content or result.snippet)
@@ -736,6 +1005,8 @@ class SourceDiscoveryService:
                 scores = self._scorer.score(payload, result, content, classification, duplicate_index)
                 provider_metadata = dict(content.metadata)
                 provider_metadata.update(result.metadata or {})
+                provider_metadata.setdefault("query", search_query)
+                provider_metadata.setdefault("query_bucket", query.partition(":")[0] if ":" in query else "general")
                 candidates.append(
                     SourceCandidateWrite(
                         title=result.title,
