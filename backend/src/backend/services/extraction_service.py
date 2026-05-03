@@ -21,6 +21,7 @@ from backend.services.extraction_contracts import (
     MergedGraphResult,
 )
 from backend.services.llm_client import LlmJsonClient
+from backend.services.job_dispatcher import RedisJobDispatcher
 from backend.shared.errors import ApplicationError, ErrorCode
 from backend.shared.logging import get_logger
 
@@ -138,10 +139,12 @@ class ExtractionService:
         extraction_repository: ExtractionRepository,
         job_repository: JobRepository,
         llm_client: LlmJsonClient,
+        job_dispatcher: RedisJobDispatcher | None = None,
     ) -> None:
         self._extraction_repository = extraction_repository
         self._job_repository = job_repository
         self._llm_client = llm_client
+        self._job_dispatcher = job_dispatcher
         self._logger = get_logger("backend.graph_extraction")
 
     async def submit(self, request: GraphExtractionSubmissionRequest) -> GraphExtractionSubmissionResponse:
@@ -165,6 +168,8 @@ class ExtractionService:
             case_id=request.case_id,
             document_ids=[str(document.id) for document in documents],
         )
+        if self._job_dispatcher is not None:
+            await self._job_dispatcher.publish_job(job)
         self._logger.info(
             "graph_extraction_submitted",
             extra={"case_id": request.case_id, "job_id": str(job.id), "document_count": len(documents)},

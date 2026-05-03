@@ -9,6 +9,7 @@ from backend.repository.simulation_repository import SIMULATION_JOB_TYPE, Simula
 from backend.services.extraction_contracts import GRAPH_EXTRACTION_JOB_TYPE
 from backend.services.source_discovery_contracts import SOURCE_DISCOVERY_JOB_TYPE
 from backend.services.llm_client import LlmJsonClient
+from backend.services.job_dispatcher import RedisJobDispatcher
 from backend.services.simulation_contracts import (
     JobStatusResponse,
     SimulationJobPayload,
@@ -47,11 +48,13 @@ class SimulationService:
         simulation_repository: SimulationRepository,
         job_repository: JobRepository,
         llm_client: LlmJsonClient,
+        job_dispatcher: RedisJobDispatcher | None = None,
     ) -> None:
         self._config = config
         self._simulation_repository = simulation_repository
         self._job_repository = job_repository
         self._llm_client = llm_client
+        self._job_dispatcher = job_dispatcher
         self._logger = get_logger("backend.simulation")
 
     async def submit(self, request: SimulationSubmissionRequest) -> SimulationSubmissionResponse:
@@ -79,6 +82,8 @@ class SimulationService:
             )
 
         run, job = await self._simulation_repository.create_submission(request)
+        if self._job_dispatcher is not None:
+            await self._job_dispatcher.publish_job(job)
         self._logger.info(
             "simulation_submitted",
             extra={

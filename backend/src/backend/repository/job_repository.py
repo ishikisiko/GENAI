@@ -88,6 +88,52 @@ class JobRepository:
             await session.refresh(row)
             return row
 
+    async def claim_pending_job(self, job_id: str, worker_id: str) -> Job | None:
+        now = datetime.now(timezone.utc)
+        async with self._database.session() as session:
+            query = (
+                select(Job)
+                .where(
+                    Job.id == job_id,
+                    Job.status == JobStatus.PENDING,
+                    (Job.scheduled_at.is_(None)) | (Job.scheduled_at <= now),
+                )
+                .with_for_update(skip_locked=True)
+            )
+            result = await session.execute(query)
+            row = result.scalar_one_or_none()
+            if row is None:
+                return None
+            if row.attempt_count >= row.max_attempts and row.max_attempts > 0:
+                row.status = JobStatus.FAILED
+                row.updated_at = now
+                row.last_error = "Maximum retry attempts reached"
+                row.last_error_code = "MAX_RETRIES_EXCEEDED"
+                await session.flush()
+                return None
+
+            row.status = JobStatus.RUNNING
+            row.locked_by = worker_id
+            row.locked_at = now
+            row.heartbeat_at = now
+            row.updated_at = now
+            row.attempt_count += 1
+
+            attempt = JobAttempt(
+                id=str(uuid4()),
+                job_id=row.id,
+                attempt_number=row.attempt_count,
+                worker_id=worker_id,
+                status=JobAttemptStatus.RUNNING,
+                payload_snapshot=row.payload,
+                started_at=now,
+                created_at=now,
+            )
+            session.add(attempt)
+            await session.flush()
+            await session.refresh(row)
+            return row
+
     async def mark_running_complete(
         self,
         job_id: str,

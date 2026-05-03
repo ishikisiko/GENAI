@@ -9,6 +9,9 @@ import httpx
 
 from backend.shared.config import BackendConfig
 from backend.shared.errors import ConfigurationError, DependencyError
+from backend.shared.cache_keys import hash_value, stable_cache_key
+from backend.shared.logging import get_logger
+from backend.shared.redis_client import RedisClient, RedisUnavailableError
 
 
 def _trim_trailing_slash(value: str) -> str:
@@ -76,8 +79,10 @@ def _extract_json_string(content: str) -> str:
 
 
 class LlmJsonClient:
-    def __init__(self, config: BackendConfig) -> None:
+    def __init__(self, config: BackendConfig, redis_client: RedisClient | None = None) -> None:
         self._config = config
+        self._redis = redis_client
+        self._logger = get_logger("backend.llm")
         self._api_key = config.llm_api_key or config.anthropic_api_key or config.openai_api_key
         self._base_url = _trim_trailing_slash(
             config.llm_base_url or config.anthropic_base_url or "https://api.openai.com/v1"
@@ -92,10 +97,19 @@ class LlmJsonClient:
         if not self._api_key:
             raise ConfigurationError("LLM_API_KEY, ANTHROPIC_API_KEY, or OPENAI_API_KEY is not configured")
 
+        cache_key = self._cache_key(prompt, temperature)
+        if cache_key:
+            cached = await self._get_cached(cache_key)
+            if isinstance(cached, dict):
+                return cached
+
         attempt = 0
         while True:
             try:
-                return await self._request_json(prompt=prompt, temperature=temperature)
+                payload = await self._request_json(prompt=prompt, temperature=temperature)
+                if cache_key:
+                    await self._set_cached(cache_key, payload)
+                return payload
             except (httpx.TimeoutException, httpx.HTTPError, DependencyError) as exc:
                 attempt += 1
                 retryable = self._is_retryable(exc)
@@ -168,3 +182,44 @@ class LlmJsonClient:
         if isinstance(exc, DependencyError):
             return False
         return False
+
+    def _cache_key(self, prompt: str, temperature: float) -> str | None:
+        if (
+            not self._config.redis_cache_enabled
+            or self._config.redis_cache_llm_ttl_seconds <= 0
+            or self._redis is None
+            or not self._redis.enabled
+        ):
+            return None
+        return stable_cache_key(
+            "llm-json",
+            {
+                "provider": self._provider,
+                "base_url": self._base_url,
+                "model": self._model,
+                "temperature": temperature,
+                "max_tokens": self._config.llm_max_tokens,
+                "prompt_hash": hash_value(prompt),
+            },
+        )
+
+    async def _get_cached(self, key: str) -> Any | None:
+        if self._redis is None:
+            return None
+        try:
+            return await self._redis.get_json(key)
+        except RedisUnavailableError as exc:
+            self._logger.warning("redis_cache_get_degraded", extra={"operation": "llm", "reason": str(exc)})
+            if self._config.redis_requirement_mode == "required":
+                raise DependencyError("redis", details={"operation": "llm_cache_get", "reason": str(exc)}) from exc
+            return None
+
+    async def _set_cached(self, key: str, payload: dict[str, Any]) -> None:
+        if self._redis is None:
+            return
+        try:
+            await self._redis.set_json(key, payload, self._config.redis_cache_llm_ttl_seconds)
+        except RedisUnavailableError as exc:
+            self._logger.warning("redis_cache_set_degraded", extra={"operation": "llm", "reason": str(exc)})
+            if self._config.redis_requirement_mode == "required":
+                raise DependencyError("redis", details={"operation": "llm_cache_set", "reason": str(exc)}) from exc

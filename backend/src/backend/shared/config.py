@@ -37,6 +37,32 @@ class BackendConfig(BaseSettings):
     product_auth_mode: Literal["public", "require_bearer"] = Field(default="public", alias="APP_PRODUCT_AUTH_MODE")
     database_url: str = Field(..., alias="APP_DATABASE_URL")
     cors_origins: str = Field(default="*", alias="APP_CORS_ORIGINS")
+    redis_enabled: bool = Field(default=False, alias="REDIS_ENABLED")
+    redis_requirement_mode: Literal["optional", "required"] = Field(default="optional", alias="REDIS_REQUIREMENT_MODE")
+    redis_url: str = Field(default="redis://127.0.0.1:6379/0", alias="REDIS_URL")
+    redis_operation_timeout_seconds: float = Field(default=1.0, gt=0.0, alias="REDIS_OPERATION_TIMEOUT_SECONDS")
+    redis_rate_limit_enabled: bool = Field(default=False, alias="REDIS_RATE_LIMIT_ENABLED")
+    redis_rate_limit_window_seconds: int = Field(default=60, ge=1, alias="REDIS_RATE_LIMIT_WINDOW_SECONDS")
+    redis_rate_limit_simulations: int = Field(default=5, ge=1, alias="REDIS_RATE_LIMIT_SIMULATIONS")
+    redis_rate_limit_agent_generation: int = Field(default=5, ge=1, alias="REDIS_RATE_LIMIT_AGENT_GENERATION")
+    redis_rate_limit_source_discovery_jobs: int = Field(
+        default=10,
+        ge=1,
+        alias="REDIS_RATE_LIMIT_SOURCE_DISCOVERY_JOBS",
+    )
+    redis_rate_limit_source_discovery_assistant: int = Field(
+        default=10,
+        ge=1,
+        alias="REDIS_RATE_LIMIT_SOURCE_DISCOVERY_ASSISTANT",
+    )
+    redis_cache_enabled: bool = Field(default=False, alias="REDIS_CACHE_ENABLED")
+    redis_cache_llm_ttl_seconds: int = Field(default=300, ge=0, alias="REDIS_CACHE_LLM_TTL_SECONDS")
+    redis_cache_search_ttl_seconds: int = Field(default=600, ge=0, alias="REDIS_CACHE_SEARCH_TTL_SECONDS")
+    redis_cache_content_ttl_seconds: int = Field(default=3600, ge=0, alias="REDIS_CACHE_CONTENT_TTL_SECONDS")
+    redis_stream_dispatch_enabled: bool = Field(default=False, alias="REDIS_STREAM_DISPATCH_ENABLED")
+    redis_stream_name: str = Field(default="genai:jobs", alias="REDIS_STREAM_NAME")
+    redis_stream_group: str = Field(default="genai-workers", alias="REDIS_STREAM_GROUP")
+    redis_stream_read_block_ms: int = Field(default=100, ge=0, alias="REDIS_STREAM_READ_BLOCK_MS")
     supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
     supabase_anon_key: str | None = Field(default=None, alias="SUPABASE_ANON_KEY")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")

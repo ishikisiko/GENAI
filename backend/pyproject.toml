@@ -16,7 +16,8 @@ dependencies = [
   "SQLAlchemy>=2.0.40",
   "asyncpg>=0.30.0",
   "greenlet>=3.1.1",
-  "httpx>=0.28.1"
+  "httpx>=0.28.1",
+  "redis>=5.2.0"
 ]
 
 [project.optional-dependencies]
@@ -43,5 +44,8 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 minversion = "8.3"
-addopts = "-q"
+addopts = "-q -m 'not integration'"
 testpaths = ["tests"]
+markers = [
+  "integration: tests that require real external services such as Postgres or Redis"
+]

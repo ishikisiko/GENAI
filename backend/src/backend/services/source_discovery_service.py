@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html import unescape
@@ -22,6 +23,7 @@ from backend.domain.simulation_records import (
 )
 from backend.repository.extraction_repository import ExtractionRepository
 from backend.repository.job_repository import JobRepository
+from backend.services.job_dispatcher import RedisJobDispatcher
 from backend.repository.source_discovery_repository import SourceDiscoveryRepository
 from backend.services.source_discovery_contracts import (
     SOURCE_DISCOVERY_JOB_TYPE,
@@ -42,8 +44,10 @@ from backend.services.source_discovery_contracts import (
 )
 from backend.services.semantic_source_recall import LocalSemanticIndex
 from backend.shared.config import BackendConfig
+from backend.shared.cache_keys import stable_cache_key
 from backend.shared.errors import ApplicationError, ConfigurationError, DependencyError, ErrorCode
 from backend.shared.logging import get_logger
+from backend.shared.redis_client import RedisClient, RedisUnavailableError
 
 
 @dataclass(frozen=True)
@@ -604,6 +608,138 @@ class HttpContentFetcher:
         )
 
 
+class CachedSearchProvider:
+    def __init__(
+        self,
+        wrapped: SearchProvider,
+        redis_client: RedisClient,
+        ttl_seconds: int,
+        provider_name: str,
+        config: BackendConfig,
+    ) -> None:
+        self._wrapped = wrapped
+        self.wrapped_provider = wrapped
+        self._redis = redis_client
+        self._ttl_seconds = ttl_seconds
+        self._provider_name = provider_name
+        self._config = config
+        self._logger = get_logger("backend.source_discovery.cache")
+
+    async def search(self, query: str, request: SourceDiscoveryJobPayload) -> list[SearchResult]:
+        key = stable_cache_key(
+            "source-search",
+            {
+                "provider": self._provider_name,
+                "query": query,
+                "request": request.model_dump(mode="json"),
+            },
+        )
+        try:
+            cached = await self._redis.get_json(key)
+            if isinstance(cached, list):
+                return [_search_result_from_cache(item) for item in cached if isinstance(item, dict)]
+        except RedisUnavailableError as exc:
+            self._handle_cache_error("search_get", exc)
+
+        results = await self._wrapped.search(query, request)
+        try:
+            await self._redis.set_json(
+                key,
+                [_search_result_to_cache(result) for result in results],
+                self._ttl_seconds,
+            )
+        except RedisUnavailableError as exc:
+            self._handle_cache_error("search_set", exc)
+        return results
+
+    def _handle_cache_error(self, operation: str, exc: RedisUnavailableError) -> None:
+        self._logger.warning("redis_cache_degraded", extra={"operation": operation, "reason": str(exc)})
+        if self._config.redis_requirement_mode == "required":
+            raise DependencyError("redis", details={"operation": operation, "reason": str(exc)}) from exc
+
+
+class CachedContentFetcher:
+    def __init__(
+        self,
+        wrapped: ContentFetcher,
+        redis_client: RedisClient,
+        ttl_seconds: int,
+        fetcher_name: str,
+        config: BackendConfig,
+    ) -> None:
+        self._wrapped = wrapped
+        self._redis = redis_client
+        self._ttl_seconds = ttl_seconds
+        self._fetcher_name = fetcher_name
+        self._config = config
+        self._logger = get_logger("backend.source_discovery.cache")
+
+    async def fetch(self, result: SearchResult) -> FetchedContent:
+        key = stable_cache_key(
+            "source-content",
+            {
+                "fetcher": self._fetcher_name,
+                "url": canonicalize_url(result.url),
+                "provider": result.provider,
+            },
+        )
+        try:
+            cached = await self._redis.get_json(key)
+            if isinstance(cached, dict):
+                return FetchedContent(
+                    content=str(cached.get("content") or ""),
+                    excerpt=str(cached.get("excerpt") or ""),
+                    metadata=dict(cached.get("metadata") or {}),
+                )
+        except RedisUnavailableError as exc:
+            self._handle_cache_error("content_get", exc)
+
+        fetched = await self._wrapped.fetch(result)
+        try:
+            await self._redis.set_json(
+                key,
+                {
+                    "content": fetched.content,
+                    "excerpt": fetched.excerpt,
+                    "metadata": fetched.metadata,
+                },
+                self._ttl_seconds,
+            )
+        except RedisUnavailableError as exc:
+            self._handle_cache_error("content_set", exc)
+        return fetched
+
+    def _handle_cache_error(self, operation: str, exc: RedisUnavailableError) -> None:
+        self._logger.warning("redis_cache_degraded", extra={"operation": operation, "reason": str(exc)})
+        if self._config.redis_requirement_mode == "required":
+            raise DependencyError("redis", details={"operation": operation, "reason": str(exc)}) from exc
+
+
+def _search_result_to_cache(result: SearchResult) -> dict[str, object]:
+    payload = asdict(result)
+    payload["published_at"] = result.published_at.isoformat() if result.published_at else None
+    return payload
+
+
+def _search_result_from_cache(payload: dict[str, object]) -> SearchResult:
+    published_at = payload.get("published_at")
+    parsed_published_at = None
+    if isinstance(published_at, str) and published_at:
+        try:
+            parsed_published_at = datetime.fromisoformat(published_at)
+        except ValueError:
+            parsed_published_at = None
+    return SearchResult(
+        title=str(payload.get("title") or ""),
+        url=str(payload.get("url") or ""),
+        snippet=str(payload.get("snippet") or ""),
+        source_type=str(payload.get("source_type") or "news"),
+        provider=str(payload.get("provider") or "cache"),
+        published_at=parsed_published_at,
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
 class SimpleSourceClassifier:
     def classify(self, result: SearchResult, content: FetchedContent) -> str:
         domain = _domain_for_url(result.url)
@@ -832,11 +968,15 @@ class SimplePreviewExtractor:
         return [{"name": name.title(), "role": "mentioned"} for name in known if name in lowered][:5]
 
 
-def build_source_discovery_search_provider(config: BackendConfig) -> SearchProvider:
+def build_source_discovery_search_provider(
+    config: BackendConfig,
+    redis_client: RedisClient | None = None,
+) -> SearchProvider:
     if config.source_discovery_search_provider == "mock":
-        return MockSearchProvider()
-    if config.source_discovery_search_provider == "brave":
-        return BraveSearchProvider(
+        provider: SearchProvider = MockSearchProvider()
+        provider_name = "mock"
+    elif config.source_discovery_search_provider == "brave":
+        provider = BraveSearchProvider(
             api_key=config.brave_search_api_key,
             endpoint=config.brave_search_endpoint,
             count=config.brave_search_count,
@@ -845,19 +985,49 @@ def build_source_discovery_search_provider(config: BackendConfig) -> SearchProvi
             rate_limit_seconds=config.brave_search_rate_limit_seconds,
             timeout_seconds=config.request_timeout_seconds,
         )
-    raise ConfigurationError(
-        f"Unsupported SOURCE_DISCOVERY_SEARCH_PROVIDER: {config.source_discovery_search_provider}"
-    )
+        provider_name = "brave"
+    else:
+        raise ConfigurationError(
+            f"Unsupported SOURCE_DISCOVERY_SEARCH_PROVIDER: {config.source_discovery_search_provider}"
+        )
+    if (
+        config.redis_cache_enabled
+        and config.redis_cache_search_ttl_seconds > 0
+        and redis_client is not None
+        and redis_client.enabled
+    ):
+        return CachedSearchProvider(provider, redis_client, config.redis_cache_search_ttl_seconds, provider_name, config)
+    return provider
 
 
-def build_source_discovery_content_fetcher(config: BackendConfig) -> ContentFetcher:
+def _is_brave_search_provider(provider: SearchProvider) -> bool:
+    if isinstance(provider, BraveSearchProvider):
+        return True
+    return isinstance(getattr(provider, "wrapped_provider", None), BraveSearchProvider)
+
+
+def build_source_discovery_content_fetcher(
+    config: BackendConfig,
+    redis_client: RedisClient | None = None,
+) -> ContentFetcher:
     if config.source_discovery_content_fetcher == "mock":
-        return MockContentFetcher()
-    if config.source_discovery_content_fetcher == "http":
-        return HttpContentFetcher(timeout_seconds=config.request_timeout_seconds)
-    raise ConfigurationError(
-        f"Unsupported SOURCE_DISCOVERY_CONTENT_FETCHER: {config.source_discovery_content_fetcher}"
-    )
+        fetcher: ContentFetcher = MockContentFetcher()
+        fetcher_name = "mock"
+    elif config.source_discovery_content_fetcher == "http":
+        fetcher = HttpContentFetcher(timeout_seconds=config.request_timeout_seconds)
+        fetcher_name = "http"
+    else:
+        raise ConfigurationError(
+            f"Unsupported SOURCE_DISCOVERY_CONTENT_FETCHER: {config.source_discovery_content_fetcher}"
+        )
+    if (
+        config.redis_cache_enabled
+        and config.redis_cache_content_ttl_seconds > 0
+        and redis_client is not None
+        and redis_client.enabled
+    ):
+        return CachedContentFetcher(fetcher, redis_client, config.redis_cache_content_ttl_seconds, fetcher_name, config)
+    return fetcher
 
 
 class SourceDiscoveryService:
@@ -872,6 +1042,7 @@ class SourceDiscoveryService:
         classifier: SourceClassifier | None = None,
         scorer: CandidateScorer | None = None,
         preview_extractor: PreviewExtractor | None = None,
+        job_dispatcher: RedisJobDispatcher | None = None,
     ) -> None:
         self._source_repository = source_repository
         self._job_repository = job_repository
@@ -882,11 +1053,14 @@ class SourceDiscoveryService:
         self._classifier = classifier or SimpleSourceClassifier()
         self._scorer = scorer or SimpleCandidateScorer()
         self._preview_extractor = preview_extractor or SimplePreviewExtractor()
-        self._allow_mock_results = not isinstance(self._search_provider, BraveSearchProvider)
+        self._job_dispatcher = job_dispatcher
+        self._allow_mock_results = not _is_brave_search_provider(self._search_provider)
         self._logger = get_logger("backend.source_discovery")
 
     async def submit(self, request: SourceDiscoveryJobCreateRequest) -> SourceDiscoverySubmissionResponse:
         discovery_job, job = await self._source_repository.create_discovery_submission(request)
+        if self._job_dispatcher is not None:
+            await self._job_dispatcher.publish_job(job)
         return self._discovery_response(discovery_job, job, outcome="accepted")
 
     async def get_status(self, discovery_job_id: str) -> SourceDiscoveryJobResponse:
@@ -937,6 +1111,8 @@ class SourceDiscoveryService:
             case_id=case_id,
             document_ids=[str(document.id) for document in documents],
         )
+        if self._job_dispatcher is not None:
+            await self._job_dispatcher.publish_job(job)
         return EvidencePackGroundingResponse(
             evidence_pack_id=evidence_pack_id,
             case_id=case_id,

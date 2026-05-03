@@ -5,6 +5,7 @@ from typing import Awaitable, Callable, Dict, Iterable
 
 from backend.domain.models import Job
 from backend.repository.job_repository import JobRepository
+from backend.services.job_dispatcher import RedisJobDispatcher
 from backend.shared.errors import ApplicationError
 from backend.shared.logging import correlation_context, get_logger
 
@@ -18,12 +19,14 @@ class WorkerRuntime:
         worker_id: str,
         handlers: Dict[str, Callable[[Job], Awaitable[dict[str, object] | None]]] | None = None,
         maintenance_tasks: Iterable[Callable[[], Awaitable[int | None]]] | None = None,
+        job_dispatcher: RedisJobDispatcher | None = None,
         poll_interval_seconds: float = 1.0,
     ) -> None:
         self._repository = repository
         self._worker_id = worker_id
         self._handlers = handlers or {}
         self._maintenance_tasks = list(maintenance_tasks or [])
+        self._job_dispatcher = job_dispatcher
         self._poll_interval_seconds = poll_interval_seconds
         self._logger = get_logger("backend.worker")
         self._running = True
@@ -42,7 +45,17 @@ class WorkerRuntime:
             if recovered:
                 self._logger.info("worker_maintenance_task_completed", extra={"count": recovered})
 
-        job = await self._repository.claim_next_pending_job(self._worker_id)
+        dispatch_message = None
+        job = None
+        if self._job_dispatcher is not None and self._job_dispatcher.enabled:
+            dispatch_message = await self._job_dispatcher.read_job(self._worker_id)
+            if dispatch_message is not None:
+                job = await self._repository.claim_pending_job(dispatch_message.job_id, self._worker_id)
+                if job is None:
+                    await self._job_dispatcher.ack(dispatch_message.message_id)
+                    return True
+        if job is None:
+            job = await self._repository.claim_next_pending_job(self._worker_id)
         if job is None:
             return False
 
@@ -56,6 +69,8 @@ class WorkerRuntime:
                         code="UNHANDLED_JOB_TYPE",
                         message=f"No handler registered for {job.job_type}",
                     )
+                    if dispatch_message is not None and self._job_dispatcher is not None:
+                        await self._job_dispatcher.ack(dispatch_message.message_id)
                     self._logger.error("job_failed_unhandled", extra={"job_id": job.id, "job_type": job.job_type})
                     return True
 
@@ -66,9 +81,13 @@ class WorkerRuntime:
                     job.id,
                     result=completion_result,
                 )
+                if dispatch_message is not None and self._job_dispatcher is not None:
+                    await self._job_dispatcher.ack(dispatch_message.message_id)
                 self._logger.info("job_completed", extra={"job_id": job.id})
             except ApplicationError as exc:
                 await self._repository.mark_running_failed(job.id, code=exc.code.value, message=exc.message)
+                if dispatch_message is not None and self._job_dispatcher is not None:
+                    await self._job_dispatcher.ack(dispatch_message.message_id)
                 self._logger.error("job_failed", extra={"job_id": job.id, "error": exc.message})
             except Exception as exc:  # pragma: no cover - catches worker runtime failures.
                 await self._repository.mark_running_failed(
@@ -76,6 +95,8 @@ class WorkerRuntime:
                     code="WORKER_ERROR",
                     message=str(exc),
                 )
+                if dispatch_message is not None and self._job_dispatcher is not None:
+                    await self._job_dispatcher.ack(dispatch_message.message_id)
                 self._logger.exception("job_failed_unexpected", extra={"job_id": job.id})
         return True
 

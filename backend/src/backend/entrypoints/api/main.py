@@ -18,9 +18,12 @@ from backend.repository.source_library_repository import SourceLibraryRepository
 from backend.shared.config import BackendConfig
 from backend.shared.errors import ApplicationError, DependencyError, ErrorCode
 from backend.shared.logging import configure_logging, correlation_context, get_logger
+from backend.shared.rate_limit import RedisRateLimiter
+from backend.shared.redis_client import RedisClient, RedisUnavailableError, build_redis_client
 from backend.shared.request_context import build_request_context
 from backend.services.extraction_contracts import GraphExtractionSubmissionRequest
 from backend.services.extraction_service import ExtractionService
+from backend.services.job_dispatcher import RedisJobDispatcher
 from backend.services.llm_client import LlmJsonClient
 from backend.services.agent_generation_contracts import AgentGenerationRequest
 from backend.services.agent_generation_service import AgentGenerationService
@@ -68,6 +71,7 @@ def _apply_cors_headers(request: Request, response: Response, config: BackendCon
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     yield
+    await app.state.redis_client.close()
     await app.state.database.dispose()
 
 
@@ -81,33 +85,41 @@ def create_app(
     source_discovery_service: SourceDiscoveryService | None = None,
     source_discovery_assistant_service: SourceDiscoveryAssistantService | None = None,
     source_library_service: SourceLibraryService | None = None,
+    redis_client: RedisClient | None = None,
+    rate_limiter: RedisRateLimiter | None = None,
 ) -> FastAPI:
     configure_logging(config.app_name, config.log_level)
     logger = get_logger("backend.api")
+    redis_client = redis_client or build_redis_client(config)
+    rate_limiter = rate_limiter or RedisRateLimiter(config, redis_client)
     repository = repository or JobRepository(database)
-    llm_client = LlmJsonClient(config)
+    job_dispatcher = RedisJobDispatcher(config, redis_client)
+    llm_client = LlmJsonClient(config, redis_client=redis_client)
     simulation_service = simulation_service or SimulationService(
         config=config,
         simulation_repository=SimulationRepository(database),
         job_repository=repository,
         llm_client=llm_client,
+        job_dispatcher=job_dispatcher,
     )
     extraction_service = extraction_service or ExtractionService(
         extraction_repository=ExtractionRepository(database),
         job_repository=repository,
         llm_client=llm_client,
+        job_dispatcher=job_dispatcher,
     )
     source_discovery_search_provider = None
     source_discovery_content_fetcher = None
     if source_discovery_service is None or source_discovery_assistant_service is None:
-        source_discovery_search_provider = build_source_discovery_search_provider(config)
-        source_discovery_content_fetcher = build_source_discovery_content_fetcher(config)
+        source_discovery_search_provider = build_source_discovery_search_provider(config, redis_client=redis_client)
+        source_discovery_content_fetcher = build_source_discovery_content_fetcher(config, redis_client=redis_client)
     source_discovery_service = source_discovery_service or SourceDiscoveryService(
         source_repository=SourceDiscoveryRepository(database),
         job_repository=repository,
         extraction_repository=ExtractionRepository(database),
         search_provider=source_discovery_search_provider,
         content_fetcher=source_discovery_content_fetcher,
+        job_dispatcher=job_dispatcher,
     )
     source_discovery_assistant_service = source_discovery_assistant_service or SourceDiscoveryAssistantService(
         source_repository=SourceDiscoveryRepository(database),
@@ -133,6 +145,8 @@ def create_app(
     app.state.source_discovery_service = source_discovery_service
     app.state.source_discovery_assistant_service = source_discovery_assistant_service
     app.state.source_library_service = source_library_service
+    app.state.redis_client = redis_client
+    app.state.rate_limiter = rate_limiter
 
     app.add_middleware(
         CORSMiddleware,
@@ -161,6 +175,24 @@ def create_app(
             return response
 
         request.state.request_context = request_context
+        try:
+            rate_limit_result = await rate_limiter.check(request, request_context)
+        except ApplicationError as exc:
+            payload = exc.to_payload(request_id=request_id, route=request.url.path)
+            response = JSONResponse(status_code=exc.status_code, content=payload)
+            response.headers["x-request-id"] = request_id
+            _apply_cors_headers(request, response, config)
+            return response
+        if rate_limit_result is not None and not rate_limit_result.allowed:
+            exc = rate_limiter.to_error(rate_limit_result)
+            payload = exc.to_payload(request_id=request_id, route=request.url.path)
+            response = JSONResponse(status_code=exc.status_code, content=payload)
+            response.headers["x-request-id"] = request_id
+            response.headers["Retry-After"] = str(rate_limit_result.retry_after_seconds)
+            response.headers["X-RateLimit-Limit"] = str(rate_limit_result.limit)
+            response.headers["X-RateLimit-Remaining"] = str(rate_limit_result.remaining)
+            _apply_cors_headers(request, response, config)
+            return response
         response: Response
         with correlation_context(
             request_id=request_id,
@@ -252,6 +284,14 @@ def create_app(
             await app.state.database.ping()
         except Exception as exc:
             raise DependencyError(dependency="database", details={"reason": str(exc)}) from exc
+        if config.redis_enabled and config.redis_requirement_mode == "required":
+            try:
+                await app.state.redis_client.ping()
+            except Exception as exc:
+                raise DependencyError(
+                    dependency="redis",
+                    details={"reason": str(exc), "mode": config.redis_requirement_mode},
+                ) from exc
         return {"status": "ready", "service": config.app_name}
 
     @app.get("/ops")
@@ -262,9 +302,27 @@ def create_app(
             raise DependencyError(dependency="database", details={"reason": str(exc)}) from exc
 
         safe_counts = {str(status): count for status, count in counts.items()}
+        redis_status = "disabled"
+        if config.redis_enabled:
+            try:
+                redis_status = "available" if await app.state.redis_client.ping() else "degraded"
+            except RedisUnavailableError:
+                redis_status = "degraded"
+            except Exception:
+                redis_status = "degraded"
         return {
             "service": config.app_name,
             "jobs": safe_counts,
+            "redis": {
+                "enabled": config.redis_enabled,
+                "requirement_mode": config.redis_requirement_mode,
+                "status": redis_status,
+                "features": {
+                    "rate_limit": config.redis_rate_limit_enabled,
+                    "cache": config.redis_cache_enabled,
+                    "stream_dispatch": config.redis_stream_dispatch_enabled,
+                },
+            },
         }
 
     @app.post("/api/simulations")

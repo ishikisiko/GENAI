@@ -8,6 +8,7 @@ from backend.services.simulation_service import SimulationService
 from backend.services.source_discovery_contracts import SOURCE_DISCOVERY_JOB_TYPE
 from backend.services.source_discovery_service import SourceDiscoveryService
 from backend.services.worker import WorkerRuntime
+from backend.services.job_dispatcher import RedisJobDispatcher
 
 
 def build_worker(
@@ -19,6 +20,7 @@ def build_worker(
     poll_interval_seconds: float,
     source_library_repository: SourceLibraryRepository | None = None,
     semantic_fragment_maintenance_batch_size: int = 0,
+    job_dispatcher: RedisJobDispatcher | None = None,
 ):
     maintenance_tasks = [simulation_service.recover_stale_jobs]
     if source_library_repository is not None and semantic_fragment_maintenance_batch_size > 0:
@@ -37,5 +39,6 @@ def build_worker(
             SOURCE_DISCOVERY_JOB_TYPE: source_discovery_service.handle_job,
         },
         maintenance_tasks=maintenance_tasks,
+        job_dispatcher=job_dispatcher,
         poll_interval_seconds=poll_interval_seconds,
     )

@@ -11,7 +11,9 @@ from backend.repository.simulation_repository import SimulationRepository
 from backend.repository.source_discovery_repository import SourceDiscoveryRepository
 from backend.repository.source_library_repository import SourceLibraryRepository
 from backend.shared.config import load_config
+from backend.shared.redis_client import build_redis_client
 from backend.services.extraction_service import ExtractionService
+from backend.services.job_dispatcher import RedisJobDispatcher
 from backend.services.llm_client import LlmJsonClient
 from backend.services.semantic_source_recall import build_semantic_index
 from backend.services.simulation_service import SimulationService
@@ -25,25 +27,30 @@ from backend.services.source_discovery_service import (
 async def _run() -> None:
     config = load_config()
     database = Database(config.database_url)
+    redis_client = build_redis_client(config)
+    job_dispatcher = RedisJobDispatcher(config, redis_client)
     repository = JobRepository(database)
-    llm_client = LlmJsonClient(config)
+    llm_client = LlmJsonClient(config, redis_client=redis_client)
     simulation_service = SimulationService(
         config=config,
         simulation_repository=SimulationRepository(database),
         job_repository=repository,
         llm_client=llm_client,
+        job_dispatcher=job_dispatcher,
     )
     extraction_service = ExtractionService(
         extraction_repository=ExtractionRepository(database),
         job_repository=repository,
         llm_client=llm_client,
+        job_dispatcher=job_dispatcher,
     )
     source_discovery_service = SourceDiscoveryService(
         source_repository=SourceDiscoveryRepository(database),
         job_repository=repository,
         extraction_repository=ExtractionRepository(database),
-        search_provider=build_source_discovery_search_provider(config),
-        content_fetcher=build_source_discovery_content_fetcher(config),
+        search_provider=build_source_discovery_search_provider(config, redis_client=redis_client),
+        content_fetcher=build_source_discovery_content_fetcher(config, redis_client=redis_client),
+        job_dispatcher=job_dispatcher,
     )
     source_library_repository = SourceLibraryRepository(database, semantic_index=build_semantic_index(config))
     worker = build_worker(
@@ -55,8 +62,12 @@ async def _run() -> None:
         poll_interval_seconds=config.worker_poll_interval_seconds,
         source_library_repository=source_library_repository,
         semantic_fragment_maintenance_batch_size=config.semantic_fragment_maintenance_batch_size,
+        job_dispatcher=job_dispatcher,
     )
-    await worker.run()
+    try:
+        await worker.run()
+    finally:
+        await redis_client.close()
 
 
 def main() -> None:
